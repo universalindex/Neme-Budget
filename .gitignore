@@ -69,3 +69,23 @@ Thumbs.db
 *.tgz
 *.gz
 *.bin
+/.idea/compiler.xml
+/.idea/encodings.xml
+/.idea/tasks.xml
+/.idea/usage.statistics.xml
+/.idea/vcs.xml
+# Ignore all .idea XML and CML files except for codeStyles, runConfigurations, and inspectionProfiles
+/.idea/*.xml
+/.idea/*.cml
+/.idea/*.iml
+# Ignore specific files requested by user
+/.idea/studiobot.cml
+/.idea/markdown.xml
+/.idea/misc.xml
+/.idea/copilot.data.migration.ask2agent.xml
+/.idea/deploymenttargetselector.xml
+/.idea/gradle.xml
+# Keep only if you want to enforce team-wide settings (optional):
+!/.idea/codeStyles/
+!/.idea/runConfigurations/
+!/.idea/inspectionProfiles/

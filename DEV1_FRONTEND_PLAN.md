@@ -1,12 +1,14 @@
-# 🎨 DEV 1 — Frontend & UX Lead
+# 🎨 ELI — Frontend, UX & ViewModel Lead
 ### Zero-Cloud AI Budgeter | Weber State Hackathon | Due: April 3, 2026 @ 11:59 PM
 
 ---
 
 ## Your Role
-You own everything the user sees and touches. You are building in **Kotlin + Jetpack Compose** (Android).
-Dev 2 handles the backend pipeline. You two share a `Repository interface` and a set of `data classes`
-defined on **Day 1** — after that, you never block each other.
+You own everything the user sees and touches, **plus the ViewModel layer** that bridges Noah's data to your UI.
+You are building in **Kotlin + Jetpack Compose** (Android).
+Noah handles the notification service, Qwen AI engine, and encrypted database.
+You two share a `Repository interface` and a set of `data classes` defined on **Day 1** —
+after that, you never block each other.
 
 ---
 
@@ -16,32 +18,34 @@ defined on **Day 1** — after that, you never block each other.
 ### Step 1 — Create the Android Project
 1. Open Android Studio → New Project → **Empty Activity (Jetpack Compose)**
 2. Package name: `com.zerocloudbudget`
-3. Min SDK: API 26 (Android 8.0) — required for NotificationListenerService reliability
+3. Min SDK: **API 26** (Android 8.0) — required for NotificationListenerService reliability
 4. Language: **Kotlin**, Build: **Gradle (KTS)**
 
-### Step 2 — Add Dependencies to `build.gradle.kts`
+### Step 2 — Add Your Dependencies to `build.gradle.kts`
 ```kotlin
-// UI
+// UI & Navigation
 implementation("androidx.compose.ui:ui:1.6.0")
 implementation("androidx.compose.material3:material3:1.2.0")
 implementation("androidx.navigation:navigation-compose:2.7.6")
+implementation("androidx.compose.material:material-icons-extended:1.6.0")
+
+// ViewModel
+implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
 
 // Charts
-implementation("com.patrykandpatrick.vico:compose-m3:1.13.1") // Vico charts
+implementation("com.patrykandpatrick.vico:compose-m3:1.13.1")
 
-// Database (for reading — Dev 2 writes to it)
+// Room (read-only from your side — Noah writes to it)
 implementation("androidx.room:room-runtime:2.6.1")
 implementation("androidx.room:room-ktx:2.6.1")
 
 // Settings persistence
 implementation("androidx.datastore:datastore-preferences:1.0.0")
-
-// Icons
-implementation("androidx.compose.material:material-icons-extended:1.6.0")
 ```
 
-### Step 3 — Define Shared Data Classes (COMMIT THESE FIRST)
-Create `model/SharedModels.kt`. Dev 2 must agree on this before either of you writes any logic.
+### Step 3 — Define Shared Data Classes (COMMIT THESE FIRST — call Noah before writing a single line of logic)
+Create `model/SharedModels.kt`. **Both of you must approve this before either of you writes any logic.**
 
 ```kotlin
 data class Transaction(
@@ -49,9 +53,9 @@ data class Transaction(
     val merchant: String,
     val amount: Double,
     val category: Category,
-    val date: Long,            // Unix timestamp
-    val isAiParsed: Boolean,   // Show sparkle icon if true
-    val confidence: Float,     // 0.0 to 1.0
+    val date: Long,               // Unix timestamp
+    val isAiParsed: Boolean,      // Show sparkle ✨ icon if true
+    val confidence: Float,        // 0.0 to 1.0 — from Qwen's JSON output
     val rawNotificationText: String = ""
 )
 
@@ -74,8 +78,15 @@ data class Budget(
 
 data class AppSettings(
     val primaryBank: String = "",
-    val ignoredApps: Set<String> = emptySet(),   // e.g. "com.venmo"
-    val customRules: List<String> = emptyList()  // e.g. "Chevron = Gas"
+    val ignoredApps: Set<String> = emptySet(),    // e.g. "com.venmo"
+    val customRules: List<String> = emptyList()   // e.g. "Chevron = Gas"
+)
+
+// Noah exposes this from his ModelDownloadManager
+data class ModelStatus(
+    val isDownloaded: Boolean,
+    val downloadProgress: Float,  // 0.0 to 1.0
+    val modelSizeLabel: String    // e.g. "1.1 GB"
 )
 ```
 
@@ -88,231 +99,359 @@ interface AppRepository {
     suspend fun updateTransaction(transaction: Transaction)
     fun getBudgets(): Flow<List<Budget>>
     suspend fun upsertBudget(budget: Budget)
+    suspend fun deleteBudget(category: Category)
     fun getSettings(): Flow<AppSettings>
     suspend fun saveSettings(settings: AppSettings)
+    fun getModelStatus(): Flow<ModelStatus>
+    suspend fun getTotalTransactionCount(): Int
+    suspend fun wipeAllData()
+    suspend fun exportToCsv(): String   // Returns CSV string — you handle the file write/share UI
 }
 ```
 
 ### Step 5 — Create Your FakeRepository
-Create `repository/FakeRepository.kt`. This lets you build the full UI today.
-Generate 50 realistic fake transactions covering all categories and the past 30 days.
-**You will swap this out for Dev 2's `RealRepository` on March 30th.**
+Create `repository/FakeRepository.kt`. This lets you build the full UI immediately.
+```kotlin
+class FakeRepository : AppRepository {
+    // Generate 50 realistic fake transactions across all 8 categories
+    // Spread across the past 30 days
+    // Mix isAiParsed = true and false, vary confidence between 0.6 and 0.99
+    // Pre-set budgets with some near-limit, some over
+    // Override getModelStatus() → emit ModelStatus(isDownloaded = true, downloadProgress = 1f, modelSizeLabel = "1.1 GB")
+}
+```
+**You will swap this for Noah's `RealRepository` on March 30. It should be a 1-line change.**
 
 ### Step 6 — Navigation Shell
 Set up bottom nav with 4 tabs: **Dashboard, Transactions, Budgets, Settings**
-Use `NavHost` with a `Scaffold` and `NavigationBar` at the bottom.
+```kotlin
+// Use NavHost + Scaffold + NavigationBar
+// Each tab has its own navBackStackEntry so scroll position is preserved
+// Bottom bar shows badge on Transactions tab for new AI-parsed items (stretch goal)
+```
 
 ---
 
-## 🟠 Days 2–3 (March 23–24) — Dashboard Screen
-> **Goal:** The home screen looks beautiful and works with fake data.
+## 🟠 Days 2–3 (March 23–24) — ViewModels + Dashboard Screen
+> **Goal:** ViewModel layer complete for all 4 screens, Dashboard looks beautiful with fake data.
 
-### Step 1 — "Safe to Spend" Hero Card
-- Calculate: `safeToSpend = totalMonthlyIncome - totalSpentThisMonth`
-- Display as a large bold number at top center
-- Use a subtle gradient card background (dark green to teal for positive, red for negative)
-- Animate the number counting up on first load using `animateFloatAsState`
-
-### Step 2 — Spending Donut Chart
-Using Vico:
+### Step 1 — Write All 4 ViewModels First
+This is your Day 2 priority. ViewModels are what connect Noah's repository to your composables.
+Create `viewmodel/DashboardViewModel.kt`:
 ```kotlin
-// Pull this month's transactions, group by Category, sum amounts
-// Feed into Vico's PieChart composable
-// Color map each Category to a distinct color
+@HiltViewModel // or just use viewModel() without Hilt for the hackathon
+class DashboardViewModel(private val repo: AppRepository) : ViewModel() {
+    private val _selectedMonth = MutableStateFlow(YearMonth.now())
+    val selectedMonth = _selectedMonth.asStateFlow()
+
+    val transactions: StateFlow<List<Transaction>> = _selectedMonth
+        .flatMapLatest { month ->
+            repo.getTransactionsByDateRange(
+                start = month.atDay(1).toEpochMilli(),
+                end = month.atEndOfMonth().toEpochMilli()
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyList())
+
+    val spendingByCategory: StateFlow<Map<Category, Double>> = transactions
+        .map { list -> list.groupBy { it.category }.mapValues { (_, txns) -> txns.sumOf { it.amount } } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyMap())
+
+    val safeToSpend: StateFlow<Double> = transactions
+        .map { list -> 2000.0 - list.sumOf { it.amount } } // 2000 = configurable monthly income
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(), 0.0)
+
+    fun previousMonth() { _selectedMonth.update { it.minusMonths(1) } }
+    fun nextMonth() { _selectedMonth.update { it.plusMonths(1) } }
+}
 ```
-- Show category labels around the chart with amounts
-- Tap a slice → highlight it and show category total in center
 
-### Step 3 — Recent Transactions Widget
+Create `viewmodel/TransactionsViewModel.kt`:
+```kotlin
+class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
+    val transactions = repo.getAllTransactions()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyList())
+
+    var searchQuery by mutableStateOf("")
+    var selectedFilter by mutableStateOf<Category?>(null)
+
+    val filteredTransactions = combine(transactions, snapshotFlow { searchQuery }, snapshotFlow { selectedFilter }) { txns, query, filter ->
+        txns.filter { t ->
+            (query.isEmpty() || t.merchant.contains(query, ignoreCase = true)) &&
+            (filter == null || t.category == filter)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyList())
+
+    fun saveEdit(transaction: Transaction) = viewModelScope.launch {
+        repo.updateTransaction(transaction)
+        // Also push an updated rule to settings so Noah's AI learns:
+        // "merchant_name = CATEGORY" added to AppSettings.customRules
+    }
+}
+```
+
+Create `viewmodel/BudgetsViewModel.kt` and `viewmodel/SettingsViewModel.kt` similarly —
+each just collects the relevant flows from the repository and exposes `suspend fun` wrappers for actions.
+
+### Step 2 — Dashboard: "Safe to Spend" Hero Card
+- Collect `safeToSpend` from `DashboardViewModel`
+- Display as a large bold number at top center
+- Gradient card background: dark green → teal for positive, dark red for negative
+- Animate the number counting up on first composition using `animateFloatAsState`
+
+### Step 3 — Dashboard: Spending Donut Chart
+```kotlin
+// Collect spendingByCategory from ViewModel
+// Feed into Vico PieChart composable
+// Color-map each Category to a distinct color constant
+// Tap a slice → highlight it + show category total in center
+```
+
+### Step 4 — Dashboard: Recent Transactions Widget
 - Show last 5 transactions as a mini-list
-- Each row: `[Category Emoji] | Merchant Name | -$Amount | Date`
-- If `isAiParsed == true`, show a small ✨ sparkle badge on the right
-- Tap "See All" → navigates to Transactions tab
+- Each row: `[Emoji] | Merchant | -$Amount | Date | ✨ if isAiParsed`
+- Confidence dot: tiny colored circle (green/yellow/red) from `confidence` float
+- "See All" → navigate to Transactions tab
 
-### Step 4 — Month Selector Header
-- `<  March 2026  >` arrows to navigate months
-- All data on screen filters to selected month
+### Step 5 — Dashboard: Month Selector Header
+- `< March 2026 >` arrows call `viewModel.previousMonth()` / `viewModel.nextMonth()`
+- All data on screen re-filters automatically via the StateFlow chain
 
 ---
 
 ## 🟡 Days 4–5 (March 25–26) — Transactions Screen
-> **Goal:** Full transaction ledger with AI confidence indicators and edit flow.
+> **Goal:** Full ledger with AI confidence indicators and the edit-to-teach flow.
 
 ### Step 1 — Grouped List by Date
 ```kotlin
-// Group List<Transaction> by date using:
-transactions.groupBy { 
-    SimpleDateFormat("MMMM d, yyyy").format(Date(it.date)) 
+val grouped = filteredTransactions.groupBy { txn ->
+    SimpleDateFormat("MMMM d, yyyy", Locale.US).format(Date(txn.date))
 }
-// Use LazyColumn with sticky headers for each date group
+// LazyColumn with stickyHeader {} for each date group
 ```
 
 ### Step 2 — Transaction Row Composable
-Each row shows:
-- Left: Category emoji in a colored circle
-- Middle: Merchant name (bold) + Category label (muted)
-- Right: Amount in red + ✨ icon if AI parsed
-- Subtle confidence indicator: a tiny colored dot (green/yellow/red) based on `confidence`
+- Left: Category emoji in a colored filled circle
+- Middle: Merchant (bold, 1 line) + Category label (muted, small)
+- Right: `-$XX.XX` in red/coral + ✨ badge if `isAiParsed`
+- Bottom edge: 2px confidence bar (full width, color = green/yellow/red based on `confidence`)
 
-### Step 3 — Edit Bottom Sheet
-When user taps a transaction:
-- `ModalBottomSheet` slides up
-- Shows: Merchant text field, Category dropdown, Amount field
-- "Save" button calls `repository.updateTransaction()`
-- Add a note: *"Saving this will teach the AI for next time"* (for demo storytelling — the actual learning rule gets passed to Dev 2 as a custom rule string)
+### Step 3 — Edit Bottom Sheet (The "Teach AI" Flow)
+```kotlin
+// ModalBottomSheet slides up on tap
+// Fields: Merchant (OutlinedTextField), Category (dropdown ExposedDropdownMenu), Amount
+// Footer note: "Correcting this teaches the AI your preferences"
+// On Save → viewModel.saveEdit(transaction)
+//   which also appends "${oldMerchant} = ${newCategory}" to AppSettings.customRules
+//   Noah's AI will pick this up on the next notification automatically
+```
 
 ### Step 4 — Search & Filter Bar
-- Search field at top filters by merchant name
-- Filter chips: All | Dining | Groceries | Gas | etc.
+- `OutlinedTextField` at top for merchant name search
+- `LazyRow` of filter chips below: All | Dining | Groceries | Gas | etc.
+- Chips update `viewModel.selectedFilter` which flows through to `filteredTransactions`
 
 ---
 
 ## 🟢 Days 6–7 (March 27–28) — Budgets Screen
-> **Goal:** Progress bars per category with visual warnings.
+> **Goal:** Progress bars per category with live color warnings.
 
 ### Step 1 — Budget Card Composable
 ```kotlin
 @Composable
 fun BudgetCard(budget: Budget) {
-    val progress = (budget.spent / budget.limit).coerceIn(0.0, 1.0)
-    val color = when {
-        progress < 0.6f -> Color(0xFF4CAF50)  // Green
-        progress < 0.85f -> Color(0xFFFFC107) // Yellow
-        else -> Color(0xFFF44336)             // Red
+    val progress = (budget.spent / budget.limit).toFloat().coerceIn(0f, 1f)
+    val targetColor = when {
+        progress < 0.60f -> Color(0xFF4CAF50)   // Green
+        progress < 0.85f -> Color(0xFFFFC107)   // Yellow
+        else             -> Color(0xFFF44336)   // Red
     }
-    // AnimatedLinearProgressIndicator with color transition
+    val animatedColor by animateColorAsState(targetColor, tween(600))
+    val animatedProgress by animateFloatAsState(progress, tween(800))
+    // LinearProgressIndicator with animatedColor and animatedProgress
+    // Row below: "${budget.category.emoji} ${budget.category.label}" left, "$spent / $limit" right
 }
 ```
 
-### Step 2 — Add/Edit Budget Flow
-- FAB (+) button opens a dialog: select Category, enter limit amount
-- Store budgets via `repository.upsertBudget()`
-- Budget `spent` field is calculated live from the transactions in DB
+### Step 2 — Add / Edit Budget Dialog
+- FAB (+) button opens `AlertDialog`: category picker dropdown + amount text field
+- "Save" calls `viewModel.upsertBudget()`
+- Long-press a budget card → shows edit/delete options
 
 ### Step 3 — Over-Budget Alert Banner
-- If ANY category is > 100%, show a red banner at the top of the screen
-- Tapping it scrolls to the offending category
+- `AnimatedVisibility` banner at top of screen whenever any category > 100%
+- Red background, white text: "⚠️ Dining is over budget"
+- Tapping it animates the `LazyColumn` scroll to the offending card
 
 ---
 
-## 🔵 Days 8–9 (March 29–30) — Settings Screen
-> **Goal:** All controls Dev 2 needs — ship this early so they can start reading from DataStore.
+## 🔵 Days 8–9 (March 29–30) — Settings Screen + CSV Export
+> **Goal:** All controls Noah needs, shipped early. CSV export fully wired.
 
 ### Step 1 — Primary Bank Input
 ```kotlin
 OutlinedTextField(
     value = settings.primaryBank,
     label = { Text("Primary Bank (e.g. America First)") },
-    onValueChange = { /* update via ViewModel */ }
+    onValueChange = { viewModel.updatePrimaryBank(it) }
 )
+// Auto-save with 500ms debounce in ViewModel using:
+// viewModelScope.launch { delay(500); repo.saveSettings(current) }
 ```
-Auto-saves with a 500ms debounce using `LaunchedEffect + delay`.
 
 ### Step 2 — App Ignore Toggles
-Hardcoded list of common apps that spam notifications:
-- Venmo (`com.venmo`)
-- Cash App (`com.squareup.cash`)  
-- WhatsApp (`com.whatsapp`)
-- PayPal (`com.paypal.android.p2pmobile`)
-
-Each is a `Switch` composable. Toggled apps are added to `AppSettings.ignoredApps`.
-
-### Step 3 — Custom AI Rules
+Pre-filled list in your ViewModel:
 ```kotlin
-// Text field where user types rules like:
-// "Chevron = Gas"
-// "Spotify = Entertainment"
-// Stored as List<String> in AppSettings.customRules
-// Shows as chips below the field with an X to remove
+val knownSpamApps = listOf(
+    "Venmo"   to "com.venmo",
+    "Cash App" to "com.squareup.cash",
+    "WhatsApp" to "com.whatsapp",
+    "PayPal"  to "com.paypal.android.p2pmobile",
+    "Gmail"   to "com.google.android.gm"
+)
+// Each → Switch composable, toggled = added to settings.ignoredApps
 ```
 
-### Step 4 — Data Management Section
-- **Export to CSV**: Button → (stub for now, wire up in Phase 3)
-- **Wipe All Data**: Destructive button with confirmation dialog
-- Shows total transaction count: *"123 transactions stored locally"*
+### Step 3 — Custom AI Rules Input
+```kotlin
+// OutlinedTextField: user types "Chevron = Gas"
+// On submit (Enter or button): appends to settings.customRules, saves
+// Rules display as removable chips below the field
+// These flow directly into Noah's Qwen prompt — no extra wiring needed
+```
 
-### Step 5 — Model Status Card
-- Shows LLM download status (read from a SharedFlow Dev 2 exposes)
-- A progress bar if the model is downloading, green checkmark when ready
-- Estimated model size: *"2.1 GB on device"*
+### Step 4 — Qwen Model Status Card
+```kotlin
+// Collect repo.getModelStatus() → ModelStatus from Noah's ModelDownloadManager
+val modelStatus by viewModel.modelStatus.collectAsStateWithLifecycle()
+
+// If modelStatus.isDownloaded == false:
+//   Show LinearProgressIndicator with modelStatus.downloadProgress
+//   Label: "Downloading Qwen AI (one-time, ${modelStatus.modelSizeLabel})"
+// If downloaded:
+//   Green checkmark + "Qwen 2.5 1.5B · Ready · ${modelStatus.modelSizeLabel} on device"
+```
+
+### Step 5 — Data Management Section
+```kotlin
+// Transaction count row: "📦 143 transactions stored locally"
+// [Export to CSV] button → calls viewModel.exportCsv()
+//   which calls repo.exportToCsv() → gets CSV string back from Noah
+//   then YOU handle the Android share sheet:
+val shareIntent = Intent(Intent.ACTION_SEND).apply {
+    type = "text/csv"
+    putExtra(Intent.EXTRA_TEXT, csvString)
+}
+startActivity(Intent.createChooser(shareIntent, "Export transactions"))
+
+// [Wipe All Data] — red destructive button
+// AlertDialog confirmation → viewModel.wipeAll() → repo.wipeAllData()
+```
 
 ---
 
 ## ⚡ March 30–31 — INTEGRATION DAY
-> **Goal:** Swap FakeRepository for RealRepository. The pipeline goes end-to-end.
+> **Goal:** Swap FakeRepository for Noah's RealRepository. Pipeline goes end-to-end.
 
 ### Step 1 — Wire Up Real Repository
-In your DI setup (or just in your ViewModels), replace:
+In your Application class or ViewModel factory:
 ```kotlin
+// Before:
 val repo: AppRepository = FakeRepository()
-// with:
-val repo: AppRepository = RealRepository(database, dataStore)
+// After:
+val repo: AppRepository = RealRepository(database, dataStore, modelDownloadManager)
 ```
-This should be a 1-line change if contracts were followed. If anything breaks, it's a contract violation — fix the contract, not the UI.
+This must be a 1-line change. If anything breaks, the contract was violated somewhere — fix it together.
 
-### Step 2 — Test the Live Pipeline
-1. On a real Android device, enable Notification Access for your app
-2. Use your bank app or trigger a test notification
-3. Watch the Dashboard update in real-time
+### Step 2 — Do NOT Touch Noah's Code
+Your job today is verification, not debugging his pipeline. Test:
+1. Grant notification access on the physical device
+2. Fire a test ADB notification (Noah has the script)
+3. Confirm the transaction appears in your Transactions tab with ✨
+4. Confirm the relevant Budget bar updates
+5. Open Settings → verify the model status card shows "Ready"
 
-### Step 3 — Smooth Any Rough Edges
-- Add a `CircularProgressIndicator` while data loads
-- Add an empty state (`"No transactions yet. Waiting for notifications..."`)
-- Make sure rotation/recomposition doesn't cause flickers
+### Step 3 — Empty & Loading States
+- `CircularProgressIndicator` while transactions list is loading
+- Empty Dashboard: `"No transactions yet — waiting for your first notification"` with a subtle animated icon
+- Empty Budgets: `"Tap + to set your first budget goal"`
+- Make sure these states don't flash on recomposition
 
 ---
 
-## 🏁 April 1–2 — Polish & Demo Prep
+## 🏁 April 1–2 — Onboarding, Polish & Demo Prep
 
-### Step 1 — Onboarding Flow (2 screens)
-Screen 1 — Welcome:
-- Big headline: *"Your money. Your device. No cloud."*  
-- 3 bullet points explaining local AI
+### Step 1 — Onboarding Flow (3 screens, all Eli)
+**Screen 1 — Welcome:**
+- Big headline: *"Your money. Your device. No cloud."*
+- 3 short bullets: "Local AI", "Zero bank logins", "Encrypted on your phone"
 - "Get Started" button
 
-Screen 2 — Permission Gate:
-- Explain why notification access is needed
-- Big prominent button: "Grant Notification Access" → opens Android system settings
-- Visual feedback once permission is granted (checkmark animation)
+**Screen 2 — Permission Gate:**
+- Explain why notification access is needed in plain English
+- Big button: "Grant Notification Access" → `startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))`
+- `LaunchedEffect` polls every second whether permission was granted → animate checkmark when it is
+- "Next" button only enabled after permission granted
 
-Screen 3 — Model Download:
-- Progress bar with percentage
-- Message: *"Downloading AI brain to your device (one-time setup)"*
-- Reads progress from Dev 2's download status Flow
+**Screen 3 — Model Download:**
+- Reads `modelStatus` from the ViewModel
+- `LinearProgressIndicator` with percentage
+- *"Downloading Qwen AI to your device — this only happens once"*
+- Auto-advances to Dashboard when `isDownloaded == true`
 
 ### Step 2 — Dark Mode Finalization
-- Verify all colors work in both light and dark mode
-- Test on a physical device (the judges will see a real phone)
+- Audit every screen in both light and dark system themes
+- Test on the physical device you will demo on (judges see a real phone, not an emulator)
+- Make sure chart colors have enough contrast in both modes
 
-### Step 3 — Demo Script Prep
-Practice this flow for the 3-minute live demo:
-1. Show the empty Dashboard (explain local-only privacy)
-2. Open Settings, show the bank name field and ignore toggles
-3. Trigger a fake bank notification from another device
-4. Watch the transaction appear in real-time with a ✨ sparkle
-5. Tap it → edit the category → show it updates the Budget bar
-6. Show the Budgets screen turning red (set a low limit beforehand)
+### Step 3 — Demo Script (Practice This 5+ Times)
+This is your 3-minute live demo script for April 4th:
+```
+1. Open app → show Welcome screen, explain local-only privacy
+2. Show Dashboard with pre-loaded fake data (you loaded these earlier)
+3. Open Settings → type "America First" in Primary Bank, show Ignore toggle for Venmo
+4. [Noah fires ADB notification from his laptop]
+5. You watch — transaction appears in Dashboard's Recent list with ✨ sparkle
+6. Tap the transaction → show Edit sheet → change category → "teaches AI"
+7. Navigate to Budgets → show a bar turning red (pre-set a low limit)
+8. Show Transactions tab → filter by Dining → show confidence dots
+```
+
+### Step 4 — Demo Video (1–2 min, due April 2)
+Record on a physical device using screen recording + narration:
+- Clip 1 (15s): Welcome screen, explain the concept
+- Clip 2 (30s): Live notification → AI parse → chart update
+- Clip 3 (20s): Edit transaction → budget bar responds
+- Clip 4 (15s): Settings screen, explain ignore toggles and AI rules
+  Edit in CapCut or DaVinci Resolve. Upload to YouTube/Vimeo for Devpost.
+
+### Step 5 — Devpost (Your Section)
+Write the **User Experience** and **Innovation** sections:
+- UX: clean Compose UI, real-time updates, edit-to-teach flow
+- Innovation: zero bank API, zero cloud, local Qwen AI on-device
 
 ---
 
-## 📋 Your Daily Checklist
+## 📋 Eli's Daily Checklist
 
 | Day | Date | Deliverable |
 |-----|------|-------------|
-| 1 | Mar 22 | Contracts committed, project builds, navigation shell works |
-| 2-3 | Mar 23-24 | Dashboard screen complete with fake data |
+| 1 | Mar 22 | Contracts committed ✅, project builds, nav shell works |
+| 2 | Mar 23 | All 4 ViewModels written and wired to FakeRepository |
+| 3 | Mar 24 | Dashboard screen complete with charts + month selector |
 | 4-5 | Mar 25-26 | Transactions screen + edit sheet complete |
-| 6-7 | Mar 27-28 | Budgets screen complete |
-| 8-9 | Mar 29-30 | Settings screen complete + integration with real DB |
-| 10 | Mar 31 | Full pipeline tested on real device |
-| 11 | Apr 1 | Onboarding flow, polish, empty states |
-| 12 | Apr 2 | Demo video recorded, Devpost written |
-| 13 | Apr 3 | SUBMIT by 11:59 PM |
+| 6-7 | Mar 27-28 | Budgets screen + over-budget banner complete |
+| 8-9 | Mar 29-30 | Settings screen + CSV export + model status card |
+| 10 | Mar 31 | Integration day — RealRepository swapped, pipeline verified |
+| 11 | Apr 1 | Onboarding flow, empty states, dark mode audit |
+| 12 | Apr 2 | Demo video recorded + uploaded, Devpost draft written |
+| 13 | Apr 3 | Final Devpost submission by 11:59 PM ✅ |
 
 ---
 
 ## 🚨 Anti-Bottleneck Rules
-- **Never wait on Dev 2.** If a feature needs real data, stub it with fake data and move on.
-- **Communicate contract changes immediately.** If you need a new field on `Transaction`, tell Dev 2 before adding it.
-- **Use Git branches:** `feature/dashboard`, `feature/transactions`, etc. Merge to `main` daily.
-- **Share a test APK every evening** via Discord/AirDrop so you can catch integration issues early.
+- **Never wait on Noah.** FakeRepository exists so you can build everything independently.
+- **ViewModel is your responsibility.** Never put business logic in a Composable — it belongs in the ViewModel.
+- **Communicate contract changes immediately.** Need a new field on `Transaction`? Call Noah before adding it.
+- **Git branches:** `feature/viewmodels`, `feature/dashboard`, `feature/transactions`, etc. Merge to `main` every evening.
+- **Nightly APK share.** Build a debug APK and send it to Noah via Discord/iMessage so he can verify the UI is wiring up to his pipeline correctly.
+- **The edit-to-teach flow is your demo showstopper.** Make sure correcting a category visually feels instant and satisfying — animate it.
