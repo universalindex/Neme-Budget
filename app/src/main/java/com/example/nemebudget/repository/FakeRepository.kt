@@ -8,9 +8,11 @@ import com.example.nemebudget.model.Transaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.min
 import kotlin.random.Random
 
 class FakeRepository : AppRepository {
@@ -31,6 +33,7 @@ class FakeRepository : AppRepository {
             modelSizeLabel = "1.1 GB"
         )
     )
+    private val pendingNotificationCountFlow = MutableStateFlow(3)
 
     override fun getAllTransactions(): Flow<List<Transaction>> = transactionsFlow
 
@@ -68,6 +71,25 @@ class FakeRepository : AppRepository {
         settingsFlow.value = settings
     }
 
+    override fun getPendingNotificationCount(): Flow<Int> = pendingNotificationCountFlow
+
+    override suspend fun processPendingNotifications(limit: Int): Int {
+        val pending = pendingNotificationCountFlow.value
+        if (pending <= 0) return 0
+
+        val processedCount = min(limit, pending)
+        delay(700)
+        pendingNotificationCountFlow.value = pending - processedCount
+
+        if (processedCount > 0) {
+            val newTransactions = createProcessedNotificationTransactions(processedCount)
+            transactionsFlow.value = (newTransactions + transactionsFlow.value).sortedByDescending { it.date }
+            budgetsFlow.value = generateBudgets(transactionsFlow.value)
+        }
+
+        return processedCount
+    }
+
     override fun getModelStatus(): Flow<ModelStatus> = modelStatusFlow
 
     override suspend fun getTotalTransactionCount(): Int = transactionsFlow.value.size
@@ -76,6 +98,7 @@ class FakeRepository : AppRepository {
         transactionsFlow.value = emptyList()
         budgetsFlow.value = emptyList()
         settingsFlow.value = AppSettings()
+        pendingNotificationCountFlow.value = 0
     }
 
     override suspend fun exportToCsv(): String {
@@ -154,6 +177,28 @@ class FakeRepository : AppRepository {
                 category = category,
                 spent = spentByCategory[category] ?: 0.0,
                 limit = limits.getValue(category)
+            )
+        }
+    }
+
+    private fun createProcessedNotificationTransactions(count: Int): List<Transaction> {
+        val now = System.currentTimeMillis()
+        val currentMaxId = transactionsFlow.value.maxOfOrNull { it.id } ?: 0
+        val merchants = listOf("Starbucks", "Chipotle", "Smiths", "Chevron", "Target")
+        val categories = listOf(Category.DINING, Category.GROCERIES, Category.GAS, Category.SHOPPING, Category.BILLS)
+
+        return (1..count).map { index ->
+            val category = categories[(currentMaxId + index) % categories.size]
+            val merchant = merchants[(currentMaxId + index) % merchants.size]
+            Transaction(
+                id = currentMaxId + index,
+                merchant = merchant,
+                amount = String.format(Locale.US, "%.2f", 8.0 + index * 5.75).toDouble(),
+                category = category,
+                date = now - (index * 60_000L),
+                isAiParsed = true,
+                confidence = 0.93f,
+                rawNotificationText = "Processed queued notification #$index"
             )
         }
     }

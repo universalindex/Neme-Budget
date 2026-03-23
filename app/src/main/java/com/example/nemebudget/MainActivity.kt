@@ -75,6 +75,10 @@ private fun MainApp() {
     val budgetsViewModel = remember { BudgetsViewModel(repo) }
     val settingsViewModel = remember { SettingsViewModel(repo) }
 
+    LaunchedEffect(Unit) {
+        settingsViewModel.processOnAppOpenIfNeeded()
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {

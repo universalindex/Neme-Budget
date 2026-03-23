@@ -18,6 +18,8 @@ interface AppRepository {
 
     fun getSettings(): Flow<AppSettings>
     suspend fun saveSettings(settings: AppSettings)
+    fun getPendingNotificationCount(): Flow<Int>
+    suspend fun processPendingNotifications(limit: Int): Int
 
     fun getModelStatus(): Flow<ModelStatus>
     suspend fun getTotalTransactionCount(): Int

@@ -90,3 +90,27 @@ This file tracks significant changes and progress for the Neme Budget app. Pleas
 * Set the start destination to `AppDestination.Dashboard.route` so the app opens on the dashboard by default.
 * Wired the existing tabs (`Dashboard`, `Transactions`, `Budgets`, `Settings`) through bottom navigation and kept the lab accessible via `Settings -> Open LLM Lab` (`AppDestination.Lab`).
 * Rationale: the dashboard and tab screens were implemented but unreachable because the previous root `Scaffold` always rendered the lab screen only.
+
+---
+
+## 2026-03-23 - AI Assistant
+
+### Plan Alignment: Hybrid Notification Processing
+* Updated `DEV2_BACKEND_AI_PLAN.md` to reflect the agreed architecture: listener writes to encrypted `raw_notifications`, with AI processing done in batches.
+* Added backend plan details for `raw_notifications` entity/DAO methods, `NotificationProcessor`, and three batch triggers (app open, hourly `WorkManager`, and manual `Process Now`).
+* Updated backend milestones/checklists/performance notes to validate ingest-first durability before batch parse/update behavior.
+* Updated `DEV1_FRONTEND_PLAN.md` to include UI-facing batch controls: `processingState`, `Process Now` UX feedback, and integration/demo steps that explicitly show manual/app-open processing.
+* Added WorkManager dependency guidance in both plan docs so scheduled batch behavior is part of implementation scope.
+
+---
+
+## 2026-03-23 - AI Assistant
+
+### March 24 Frontend Alignment Implemented
+* Added shared `ProcessingState` contract in `app/src/main/java/com/example/nemebudget/model/SharedModels.kt` (`Idle`, `Processing`, `Success`, `Error`).
+* Extended `app/src/main/java/com/example/nemebudget/repository/AppRepository.kt` with pending queue APIs: `getPendingNotificationCount()` and `processPendingNotifications(limit)`.
+* Implemented fake queue processing in `app/src/main/java/com/example/nemebudget/repository/FakeRepository.kt` to simulate pending notifications and add AI-parsed transactions after processing.
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/SettingsViewModel.kt` with `processingState`, `processNow()`, and one-time `processOnAppOpenIfNeeded()` behavior.
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/SettingsScreen.kt` to show queued count, processing status text, and a disabled/loading `Process Now` button.
+* Wired app-open processing trigger in `app/src/main/java/com/example/nemebudget/MainActivity.kt` via `LaunchedEffect` so queued work starts once at launch.
+

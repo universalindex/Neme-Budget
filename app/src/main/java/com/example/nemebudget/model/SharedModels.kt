@@ -43,4 +43,11 @@ data class ModelStatus(
     val modelSizeLabel: String
 )
 
+sealed interface ProcessingState {
+    data object Idle : ProcessingState
+    data class Processing(val pendingCount: Int) : ProcessingState
+    data class Success(val processedCount: Int, val completedAtMillis: Long) : ProcessingState
+    data class Error(val message: String) : ProcessingState
+}
+
 

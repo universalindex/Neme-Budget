@@ -10,6 +10,11 @@ Noah handles the notification service, Qwen AI engine, and encrypted database.
 You two share a `Repository interface` and a set of `data classes` defined on **Day 1** —
 after that, you never block each other.
 
+**Architecture note (hybrid pipeline):**
+- Notifications are ingested into encrypted `raw_notifications` first.
+- AI parsing happens in batches (app open, hourly worker, and manual **Process Now**).
+- Your UI job is to make processing state visible and controllable.
+
 ---
 
 ## 🔴 Day 1 (March 22) — Contracts & Scaffolding
@@ -42,6 +47,9 @@ implementation("androidx.room:room-ktx:2.6.1")
 
 // Settings persistence
 implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+// Observe/manual trigger batch processing jobs
+implementation("androidx.work:work-runtime-ktx:2.10.1")
 ```
 
 ### Step 3 — Define Shared Data Classes (COMMIT THESE FIRST — call Noah before writing a single line of logic)
@@ -195,6 +203,13 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
 Create `viewmodel/BudgetsViewModel.kt` and `viewmodel/SettingsViewModel.kt` similarly —
 each just collects the relevant flows from the repository and exposes `suspend fun` wrappers for actions.
 
+Also add a lightweight processing state in `SettingsViewModel`:
+```kotlin
+val processingState: StateFlow<ProcessingState> // Idle, Processing(count), Success(lastRun), Error(message)
+fun processNow() // calls repository/pipeline trigger
+fun processOnAppOpenIfNeeded() // called once from app shell
+```
+
 ### Step 2 — Dashboard: "Safe to Spend" Hero Card
 - Collect `safeToSpend` from `DashboardViewModel`
 - Display as a large bold number at top center
@@ -287,7 +302,7 @@ fun BudgetCard(budget: Budget) {
 
 ---
 
-## 🔵 Days 8–9 (March 29–30) — Settings Screen + CSV Export
+## 🔵 Days 8–9 (March 29–30) — Settings Screen + CSV Export + Batch Controls
 > **Goal:** All controls Noah needs, shipped early. CSV export fully wired.
 
 ### Step 1 — Primary Bank Input
@@ -337,8 +352,8 @@ val modelStatus by viewModel.modelStatus.collectAsStateWithLifecycle()
 ### Step 5 — Data Management Section
 ```kotlin
 // Transaction count row: "📦 143 transactions stored locally"
-// [Export to CSV] button → calls viewModel.exportCsv()
-//   which calls repo.exportToCsv() → gets CSV string back from Noah
+// [Export to CSV] button -> calls viewModel.exportCsv()
+//   which calls repo.exportToCsv() -> gets CSV string back from Noah
 //   then YOU handle the Android share sheet:
 val shareIntent = Intent(Intent.ACTION_SEND).apply {
     type = "text/csv"
@@ -346,14 +361,18 @@ val shareIntent = Intent(Intent.ACTION_SEND).apply {
 }
 startActivity(Intent.createChooser(shareIntent, "Export transactions"))
 
+// [Process Now] button -> viewModel.processNow()
+// While processing: show inline spinner + "Processing 3 new notifications..."
+// After complete: "Last processed 12:41 PM"
+
 // [Wipe All Data] — red destructive button
-// AlertDialog confirmation → viewModel.wipeAll() → repo.wipeAllData()
+// AlertDialog confirmation -> viewModel.wipeAll() -> repo.wipeAllData()
 ```
 
 ---
 
 ## ⚡ March 30–31 — INTEGRATION DAY
-> **Goal:** Swap FakeRepository for Noah's RealRepository. Pipeline goes end-to-end.
+> **Goal:** Swap FakeRepository for Noah's RealRepository. Hybrid pipeline verified end-to-end.
 
 ### Step 1 — Wire Up Real Repository
 In your Application class or ViewModel factory:
@@ -369,15 +388,11 @@ This must be a 1-line change. If anything breaks, the contract was violated some
 Your job today is verification, not debugging his pipeline. Test:
 1. Grant notification access on the physical device
 2. Fire a test ADB notification (Noah has the script)
-3. Confirm the transaction appears in your Transactions tab with ✨
-4. Confirm the relevant Budget bar updates
-5. Open Settings → verify the model status card shows "Ready"
-
-### Step 3 — Empty & Loading States
-- `CircularProgressIndicator` while transactions list is loading
-- Empty Dashboard: `"No transactions yet — waiting for your first notification"` with a subtle animated icon
-- Empty Budgets: `"Tap + to set your first budget goal"`
-- Make sure these states don't flash on recomposition
+3. Confirm the raw notification is captured first (Noah validates in DB Inspector)
+4. Trigger batch processing by app open or tapping **Process Now**
+5. Confirm transaction appears in your Transactions tab with ✨
+6. Confirm the relevant Budget bar updates
+7. Open Settings -> verify model status and processing state timestamps
 
 ---
 
@@ -409,22 +424,23 @@ Your job today is verification, not debugging his pipeline. Test:
 ### Step 3 — Demo Script (Practice This 5+ Times)
 This is your 3-minute live demo script for April 4th:
 ```
-1. Open app → show Welcome screen, explain local-only privacy
+1. Open app -> show Welcome screen, explain local-only privacy
 2. Show Dashboard with pre-loaded fake data (you loaded these earlier)
-3. Open Settings → type "America First" in Primary Bank, show Ignore toggle for Venmo
+3. Open Settings -> type "America First" in Primary Bank, show Ignore toggle for Venmo
 4. [Noah fires ADB notification from his laptop]
-5. You watch — transaction appears in Dashboard's Recent list with ✨ sparkle
-6. Tap the transaction → show Edit sheet → change category → "teaches AI"
-7. Navigate to Budgets → show a bar turning red (pre-set a low limit)
-8. Show Transactions tab → filter by Dining → show confidence dots
+5. Tap "Process Now" and show "Processing new notifications..."
+6. You watch — transaction appears in Dashboard's Recent list with ✨ sparkle
+7. Tap the transaction -> show Edit sheet -> change category -> "teaches AI"
+8. Navigate to Budgets -> show a bar turning red (pre-set a low limit)
+9. Show Transactions tab -> filter by Dining -> show confidence dots
 ```
 
 ### Step 4 — Demo Video (1–2 min, due April 2)
 Record on a physical device using screen recording + narration:
 - Clip 1 (15s): Welcome screen, explain the concept
-- Clip 2 (30s): Live notification → AI parse → chart update
-- Clip 3 (20s): Edit transaction → budget bar responds
-- Clip 4 (15s): Settings screen, explain ignore toggles and AI rules
+- Clip 2 (30s): Notification captured -> manual/app-open batch process -> chart update
+- Clip 3 (20s): Edit transaction -> budget bar responds
+- Clip 4 (15s): Settings screen, explain ignore toggles, AI rules, and Process Now control
   Edit in CapCut or DaVinci Resolve. Upload to YouTube/Vimeo for Devpost.
 
 ### Step 5 — Devpost (Your Section)
@@ -443,8 +459,8 @@ Write the **User Experience** and **Innovation** sections:
 | 3 | Mar 24 | Dashboard screen complete with charts + month selector |
 | 4-5 | Mar 25-26 | Transactions screen + edit sheet complete |
 | 6-7 | Mar 27-28 | Budgets screen + over-budget banner complete |
-| 8-9 | Mar 29-30 | Settings screen + CSV export + model status card |
-| 10 | Mar 31 | Integration day — RealRepository swapped, pipeline verified |
+| 8-9 | Mar 29-30 | Settings screen + CSV export + processing controls + model status card |
+| 10 | Mar 31 | Integration day — RealRepository swapped, hybrid pipeline verified |
 | 11 | Apr 1 | Onboarding flow, empty states, dark mode audit |
 | 12 | Apr 2 | Demo video recorded + uploaded, Devpost draft written |
 | 13 | Apr 3 | Final Devpost submission by 11:59 PM ✅ |
@@ -456,5 +472,6 @@ Write the **User Experience** and **Innovation** sections:
 - **ViewModel is your responsibility.** Never put business logic in a Composable — it belongs in the ViewModel.
 - **Communicate contract changes immediately.** Need a new field on `Transaction`? Call Noah before adding it.
 - **Git branches:** `feature/viewmodels`, `feature/dashboard`, `feature/transactions`, etc. Merge to `main` every evening.
-- **Nightly APK share.** Build a debug APK and send it to Noah via Discord/iMessage so he can verify the UI is wiring up to his pipeline correctly.
-- **The edit-to-teach flow is your demo showstopper.** Make sure correcting a category visually feels instant and satisfying — animate it.
+- **Nightly APK share.** Build a debug APK and send it to Noah so he can verify UI wiring to pipeline states.
+- **Make processing visible.** The `Process Now` state feedback is part of the demo story, not just a debug tool.
+

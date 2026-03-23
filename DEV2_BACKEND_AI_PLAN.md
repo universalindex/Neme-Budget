@@ -8,6 +8,11 @@ You own the three invisible pillars of the app: the **notification interceptor**
 and the **encrypted database**. Eli builds the entire UI against a FakeRepository while you build
 the real one — no waiting, no blocking. When you push `RealRepository.kt`, he swaps it in with one line.
 
+**Architecture update (hybrid, resilient):**
+- Listener path is ingest-only: notification -> encrypted `raw_notifications` table.
+- AI path is batch-only: unprocessed rows -> Qwen parse -> `transactions`/`budgets` updates.
+- Processing triggers: app open, hourly `WorkManager`, and a manual "Process Now" action for demo control.
+
 **AI choice: Qwen 2.5 1.5B-Instruct via MLC LLM.**
 MLC LLM is the best Android runtime for Qwen because it ships prebuilt AAR packages with
 hardware-accelerated inference AND natively supports **JSON schema-constrained generation** —
@@ -41,6 +46,9 @@ implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
 // OkHttp (model download)
 implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+// Background batch scheduling
+implementation("androidx.work:work-runtime-ktx:2.10.1")
 ```
 
 Also add the MLC Maven repo to `settings.gradle.kts`:
@@ -61,9 +69,9 @@ data class TransactionEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val merchant: String,
     val amount: Double,
-    @ColumnInfo(name = "category") val category: String,  // Store enum name as String
+    @ColumnInfo(name = "category") val category: String,
     val date: Long,
-    val isAiParsed: Int,        // 0 or 1 (Room doesn't store Boolean)
+    val isAiParsed: Int,
     val confidence: Float,
     val rawNotificationText: String
 )
@@ -73,6 +81,18 @@ data class BudgetEntity(
     @PrimaryKey val categoryName: String,
     val spent: Double,
     val limit: Double
+)
+
+@Entity(tableName = "raw_notifications")
+data class RawNotificationEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val packageName: String,
+    val title: String,
+    val text: String,
+    val timestamp: Long,
+    val processed: Int = 0,
+    val processAttempts: Int = 0,
+    val lastError: String? = null
 )
 ```
 
@@ -108,6 +128,21 @@ interface AppDao {
     @Query("DELETE FROM budgets WHERE categoryName = :name")
     suspend fun deleteBudget(name: String)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRawNotification(n: RawNotificationEntity)
+
+    @Query("SELECT * FROM raw_notifications WHERE processed = 0 ORDER BY timestamp ASC LIMIT :limit")
+    suspend fun getUnprocessedRawNotifications(limit: Int): List<RawNotificationEntity>
+
+    @Query("UPDATE raw_notifications SET processed = 1, lastError = NULL WHERE id = :id")
+    suspend fun markRawProcessed(id: Int)
+
+    @Query("UPDATE raw_notifications SET processAttempts = processAttempts + 1, lastError = :error WHERE id = :id")
+    suspend fun markRawFailed(id: Int, error: String)
+
+    @Query("SELECT COUNT(*) FROM raw_notifications WHERE processed = 0")
+    fun getUnprocessedRawCount(): Flow<Int>
+
     @Query("SELECT COUNT(*) FROM transactions")
     suspend fun getTransactionCount(): Int
 
@@ -119,7 +154,10 @@ interface AppDao {
 ### Step 5 — Set Up the Encrypted Database
 Create `database/AppDatabase.kt`:
 ```kotlin
-@Database(entities = [TransactionEntity::class, BudgetEntity::class], version = 1)
+@Database(
+    entities = [TransactionEntity::class, BudgetEntity::class, RawNotificationEntity::class],
+    version = 1
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun appDao(): AppDao
 
@@ -162,10 +200,10 @@ Leave the `getModelStatus()` flow returning a hardcoded "not downloaded" for now
 
 ---
 
-## 🟠 Days 2–3 (March 23–24) — Notification Listener Service
-> **Goal:** The app intercepts any real notification. Proven in Logcat before touching AI.
+## 🟠 Days 2–3 (March 23–24) — Notification Ingestion Service
+> **Goal:** The app reliably captures notifications into encrypted storage. No AI in service path.
 
-### Step 1 — Create the Listener Service
+### Step 1 — Create the Listener Service (Ingest-Only)
 Create `notification/BudgetNotificationListener.kt`:
 ```kotlin
 class BudgetNotificationListener : NotificationListenerService() {
@@ -174,13 +212,28 @@ class BudgetNotificationListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val extras = sbn.notification.extras
-        val title   = extras.getString(Notification.EXTRA_TITLE) ?: ""
+        val title = extras.getString(Notification.EXTRA_TITLE) ?: ""
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
-                   ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-                   ?: return
+            ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            ?: return
 
-        Log.d("NOTIF_RAW", "pkg=${sbn.packageName} | title=$title | text=$bigText")
-        // Filtering and AI routing added in next steps
+        coroutineScope.launch {
+            val settings = settingsRepo.getSettingsOnce()
+            if (sbn.packageName in settings.ignoredApps) {
+                Log.d("NOTIF_FILTER", "Skipped: ${sbn.packageName} (user excluded)")
+                return@launch
+            }
+
+            appDao.insertRawNotification(
+                RawNotificationEntity(
+                    packageName = sbn.packageName,
+                    title = title,
+                    text = bigText,
+                    timestamp = sbn.postTime
+                )
+            )
+            Log.d("NOTIF_INGEST", "Saved raw notification: pkg=${sbn.packageName}")
+        }
     }
 
     override fun onDestroy() {
@@ -190,43 +243,24 @@ class BudgetNotificationListener : NotificationListenerService() {
 }
 ```
 
-### Step 2 — Apply the Ignore Filter
+### Step 2 — Add Duplicate Guard (Fast, Cheap)
 ```kotlin
-override fun onNotificationPosted(sbn: StatusBarNotification) {
-    val settings = runBlocking { settingsRepo.getSettingsOnce() }
-
-    if (sbn.packageName in settings.ignoredApps) {
-        Log.d("NOTIF_FILTER", "Skipped: ${sbn.packageName} (user excluded)")
-        return
-    }
-    // ... continue to transaction detection
-}
+// Optional but recommended inside listener write path
+val fingerprint = sha256("${sbn.packageName}|$title|$bigText|${sbn.postTime / 5000}")
+if (appDao.existsRecentRawFingerprint(fingerprint)) return
 ```
 
-### Step 3 — Transaction Detection Heuristic
-```kotlin
-// Before spending compute time on AI inference, do a cheap pre-filter
-val looksLikeTransaction = bigText.contains("$") ||
-    bigText.contains("charge",   ignoreCase = true) ||
-    bigText.contains("purchase", ignoreCase = true) ||
-    bigText.contains("payment",  ignoreCase = true) ||
-    bigText.contains("debit",    ignoreCase = true)  ||
-    (settings.primaryBank.isNotEmpty() && title.contains(settings.primaryBank, ignoreCase = true))
-
-if (!looksLikeTransaction) return
-// Route to AI
-```
-
-### Step 4 — Test the Listener ✅ MILESTONE
-1. Install on a real Android device
-2. **Settings → Apps → Special App Access → Notification Access** → enable your app
+### Step 3 — Test the Ingestion Service ✅ MILESTONE
+1. Install on a real Android device.
+2. **Settings -> Apps -> Special App Access -> Notification Access** -> enable your app.
 3. Fire a test notification via ADB:
 ```bash
 adb shell cmd notification post -S bigtext -t "Chase Bank" "TestTag" \
-  "A charge of \$23.50 at Chipotle was made on your card ending in 4242"
+  "A charge of $23.50 at Chipotle was made on your card ending in 4242"
 ```
-4. Check Logcat filter `NOTIF_RAW` — you should see the title and text
-5. ✅ **Do not write a single line of AI code until this passes.**
+4. Check Logcat filter `NOTIF_INGEST`.
+5. Verify row appears in `raw_notifications` table with `processed = 0`.
+6. ✅ Do not wire listener to Qwen directly.
 
 ---
 
@@ -431,71 +465,63 @@ Log.d("AI_TEST", "Result: $result")
 
 ---
 
-## 🟢 Days 7–8 (March 28–29) — Full Pipeline Wiring
-> **Goal:** Notification → Qwen → Database → Eli's UI updates automatically.
+## 🟢 Days 7–8 (March 28–29) — Batch Processing Pipeline
+> **Goal:** Raw notifications are processed in controlled batches into transactions and budget updates.
 
-### Step 1 — Connect Listener → Parser → Database
-In `BudgetNotificationListener.kt`:
+### Step 1 — Build `NotificationProcessor`
+Create `pipeline/NotificationProcessor.kt`:
 ```kotlin
-// Inject or access: database, transactionParser, settingsRepo, wakeLock
+class NotificationProcessor(
+    private val appDao: AppDao,
+    private val parser: TransactionParser,
+    private val settingsRepo: SettingsRepository
+) {
+    suspend fun processPending(limit: Int = 50) {
+        val pending = appDao.getUnprocessedRawNotifications(limit)
+        if (pending.isEmpty()) return
 
-override fun onNotificationPosted(sbn: StatusBarNotification) {
-    // ... (filter logic from Days 2-3) ...
-
-    coroutineScope.launch {
-        wakeLock.acquire(15_000L)  // 15s max — Qwen 1.5B usually finishes in 2-4s
-        try {
-            val settings = settingsRepo.getSettingsOnce()
-            val transaction = transactionParser.parse(bigText, settings) ?: return@launch
-
-            val withText = transaction.copy(rawNotificationText = bigText)
-            database.appDao().insertTransaction(withText.toEntity())
-
-            // Auto-update the budget's spent amount
-            val budget = database.appDao().getBudgetOnce(transaction.category.name)
-            if (budget != null) {
-                database.appDao().upsertBudget(
-                    budget.copy(spent = budget.spent + transaction.amount)
-                )
+        val settings = settingsRepo.getSettingsOnce()
+        pending.forEach { raw ->
+            try {
+                val parsed = parser.parse(raw.text, settings)
+                if (parsed != null) {
+                    val txn = parsed.copy(rawNotificationText = raw.text)
+                    appDao.insertTransaction(txn.toEntity())
+                    appDao.incrementBudgetSpent(txn.category.name, txn.amount)
+                }
+                appDao.markRawProcessed(raw.id)
+            } catch (t: Throwable) {
+                appDao.markRawFailed(raw.id, t.message ?: "unknown")
             }
-
-            Log.d("PIPELINE", "✅ Saved: ${transaction.merchant} \$${transaction.amount} → ${transaction.category}")
-        } finally {
-            if (wakeLock.isHeld) wakeLock.release()
         }
     }
 }
 ```
 
-### Step 2 — Service Lifecycle: Survive Battery Saver
+### Step 2 — Trigger Batch Processing in 3 Places
 ```kotlin
-// WakeLock setup in the service class:
-private val wakeLock by lazy {
-    (getSystemService(Context.POWER_SERVICE) as PowerManager)
-        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ZeroBudget::QwenInference")
-}
+// 1) App open (fast foreground catch-up)
+viewModelScope.launch { notificationProcessor.processPending(limit = 100) }
 
-// On Android 13+, if the service is killed, it restarts automatically IF
-// the user hasn't manually revoked Notification Access.
-// Add this to make re-init cleaner:
-override fun onListenerConnected() {
-    super.onListenerConnected()
-    Log.d("PIPELINE", "NotificationListener connected")
-    // Re-initialize Qwen engine if needed
-}
+// 2) Hourly background sweep
+val request = PeriodicWorkRequestBuilder<NotificationProcessWorker>(1, TimeUnit.HOURS).build()
+WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+    "notif-batch-hourly",
+    ExistingPeriodicWorkPolicy.UPDATE,
+    request
+)
+
+// 3) Manual trigger (Settings "Process Now" button)
+viewModelScope.launch { notificationProcessor.processPending(limit = 200) }
 ```
 
-### Step 3 — Full Pipeline Test ✅ MILESTONE
-1. Fire ADB notification:
-```bash
-adb shell cmd notification post -S bigtext -t "America First CU" "Tag1" \
-  "You made a \$67.50 purchase at Smith's Grocery on your Visa ending in 1234"
-```
-2. Wait ~3 seconds for Qwen inference
-3. Check Logcat for: `✅ Saved: Smith's Grocery $67.50 → GROCERIES`
-4. Open Android Studio → App Inspection → Database Inspector → verify row in `transactions` table
-5. Eli will confirm his UI updated automatically (Room Flow emission)
-- ✅ **This is the "Aha!" moment. The whole app is alive.**
+### Step 3 — Full Hybrid Test ✅ MILESTONE
+1. Fire 2-3 ADB notifications.
+2. Confirm `raw_notifications` rows appear first.
+3. Trigger processing (open app or tap **Process Now**).
+4. Watch logs: `BATCH_PROCESS start/end` and per-row success/failure.
+5. Verify `transactions` rows, updated budgets, and `raw_notifications.processed = 1`.
+6. ✅ This demonstrates durability + controllable AI processing.
 
 ---
 
@@ -555,10 +581,10 @@ Practice running this during the live demo so it's smooth on April 4th.
 
 ### Step 4 — Edge Cases
 Handle these before April 1:
-- Qwen not initialized yet → queue raw text, process after `engine.initialize()` completes
-- `is_transaction = false` → silently discard, log at DEBUG level only (don't spam)
-- Duplicate notification (same text within 5 seconds) → deduplicate by hash of rawText
-- Battery saver killed the service → `onListenerConnected()` reinitializes Qwen
+- Qwen not initialized -> leave rows unprocessed and retry next batch.
+- `is_transaction = false` -> mark raw row processed without creating a transaction.
+- Duplicate notification bursts -> dedupe using hash/fingerprint before insert.
+- Worker throttled by battery saver -> app-open/manual triggers still guarantee catch-up.
 
 ---
 
@@ -566,9 +592,10 @@ Handle these before April 1:
 
 ### Step 1 — Performance Audit
 Run Qwen on the exact device you'll demo on:
-- Target: inference < 4 seconds from notification received to DB insert
-- If > 6 seconds: switch to `Qwen2.5-0.5B-Instruct-q4f16_1-MLC` (faster, ~400 MB)
-- Check battery drain over 30 minutes of idle — it should be minimal since Qwen only runs on notification events
+- Target ingestion latency: < 100ms from notification post to encrypted raw row.
+- Target batch latency: < 5s for a 1-3 notification demo batch.
+- If inference is slow, switch to `Qwen2.5-0.5B-Instruct-q4f16_1-MLC`.
+- Check battery drain over 30 minutes of idle: listener should stay lightweight because AI is off service path.
 
 ### Step 2 — Devpost Write-Up (Your Section)
 Write the **Technical Complexity** section:
@@ -593,11 +620,11 @@ Write `README.md` for the public GitHub repo:
 | Day | Date | Deliverable |
 |-----|------|-------------|
 | 1 | Mar 22 | Contracts approved ✅, Room DB compiles, manifest updated, RealRepository skeleton builds |
-| 2-3 | Mar 23-24 | NotificationListener intercepts real notifications (Logcat proof) |
+| 2-3 | Mar 23-24 | NotificationListener saves raw notifications to encrypted DB (Logcat + DB proof) |
 | 4 | Mar 25 | MLC LLM initialized, Qwen model loaded, engine.isReady() == true |
 | 5 | Mar 26 | JSON schema defined, TransactionParser written |
 | 6 | Mar 27 | AI isolation test passes 5x in a row ✅ |
-| 7-8 | Mar 28-29 | Full pipeline: notification → DB insert → confirmed in DB Inspector ✅ |
+| 7-8 | Mar 28-29 | Hybrid pipeline: raw ingest -> batch process -> transaction/budget updates ✅ |
 | 9 | Mar 30 | RealRepository pushed to Git, Eli confirms swap works |
 | 10 | Mar 31 | Edge cases handled, ADB demo script written and tested |
 | 11 | Apr 1 | Performance verified on demo device, README drafted |
@@ -608,8 +635,9 @@ Write `README.md` for the public GitHub repo:
 
 ## 🚨 Anti-Bottleneck Rules
 - **Eli never waits on you.** FakeRepository covers him. Your job is to deliver `RealRepository.kt` on March 30, not before.
-- **Test each piece in isolation.** NotificationListener proven → AI parser proven → pipeline wired. Never combine unproven pieces.
+- **Test each piece in isolation.** Notification ingest proven -> AI parser proven -> batch processor proven. Never combine unproven pieces.
 - **JSON schema is the contract with Qwen.** If you change it, update `TransactionSchema.kt` and tell Eli immediately (the `Transaction` domain model may need to change too).
 - **Git branches:** `feature/database`, `feature/notification-service`, `feature/qwen-engine`, `feature/pipeline`. Merge daily to `main`.
-- **Keep a debug trigger button.** A single-tap button that fires a hardcoded string through `TransactionParser` is your fastest debugging tool. Keep it in a `DebugScreen.kt` throughout development.
+- **Keep a debug trigger button.** A single-tap button that runs `NotificationProcessor.processPending()` is your fastest debugging tool.
 - **The grammar sampler is your superpower.** When demoing, explicitly mention that Qwen is constrained by a JSON schema — judges will recognize this as real ML engineering, not just prompt engineering.
+
