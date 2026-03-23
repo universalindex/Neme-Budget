@@ -1,33 +1,36 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
-# Android Studio/JetBrains
+# IDE
 .idea/
 *.iml
-# Build outputs
+.vscode/
+.settings/
+
+# Gradle / Android build output
+.gradle/
 build/
-/app/build/
-/app/.cxx/
-/app/.externalNativeBuild/
-# Local config
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+app/.externalNativeBuild/
+app/.cxx/
+
+# Local machine config
 local.properties
-/app/local.properties
-# OS-specific
-.DS_Store
-Thumbs.db
-# Logs and temp
+app/local.properties
+
+# Artifacts and binaries
+*.apk
+*.ap_
+*.dex
+*.class
+*.hprof
+*.so
+
+# Signing keys
+*.keystore
+*.jks
+
+# Logs and temp files
 *.log
 *.tmp
 *.swp
@@ -35,30 +38,12 @@ Thumbs.db
 *.bak
 *.orig
 *.rej
-*.class
-*.apk
-*.ap_
-*.dex
-*.hprof
-*.lock
-# Sensitive keys
-*.keystore
-*.jks
-# Native/3rd-party binaries
-*.so
-*.aar
-*.jar
-/app/libs/*.aar
-/app/libs/*.jar
-# Test/coverage outputs
-/app/build/outputs/
-/app/build/reports/
-/app/coverage/
-# VSCode/other IDEs
-.vscode/
-.settings/
-# Misc
-.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local data/export files
 *.db
 *.sqlite
 *.csv
@@ -69,23 +54,6 @@ Thumbs.db
 *.tgz
 *.gz
 *.bin
-/.idea/compiler.xml
-/.idea/encodings.xml
-/.idea/tasks.xml
-/.idea/usage.statistics.xml
-/.idea/vcs.xml
-# Ignore all .idea XML and CML files except for codeStyles, runConfigurations, and inspectionProfiles
-/.idea/*.xml
-/.idea/*.cml
-/.idea/*.iml
-# Ignore specific files requested by user
-/.idea/studiobot.cml
-/.idea/markdown.xml
-/.idea/misc.xml
-/.idea/copilot.data.migration.ask2agent.xml
-/.idea/deploymenttargetselector.xml
-/.idea/gradle.xml
-# Keep only if you want to enforce team-wide settings (optional):
-!/.idea/codeStyles/
-!/.idea/runConfigurations/
-!/.idea/inspectionProfiles/
+
+# Environment files
+.env

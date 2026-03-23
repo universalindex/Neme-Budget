@@ -25,3 +25,12 @@ This file tracks significant changes and progress for the Neme Budget app. Pleas
 
 ### Frontend / UI Updates
 *   **MainActivity.kt**: Updated to include `LlmTestingScreen` for manual LLM input and verification display.
+
+---
+
+## 2026-03-23 - AI Assistant
+
+### Repository Hygiene Updates
+* Hardened `.gitignore` with a clean Android-focused baseline and full `.idea/` ignore policy to prevent IDE-specific environment files from being committed.
+* Removed already-tracked `.idea` files from git index using `git rm -r --cached .idea` so they remain local but stop affecting teammates.
+* Rationale: reduce machine-specific config churn and avoid unintended IDE environment drift across collaborators.
