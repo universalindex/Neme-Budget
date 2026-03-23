@@ -24,4 +24,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "Neme Budget"
 include(":app")
- 
