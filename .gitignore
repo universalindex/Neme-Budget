@@ -13,3 +13,59 @@
 .externalNativeBuild
 .cxx
 local.properties
+# Android Studio/JetBrains
+.idea/
+*.iml
+# Build outputs
+build/
+/app/build/
+/app/.cxx/
+/app/.externalNativeBuild/
+# Local config
+local.properties
+/app/local.properties
+# OS-specific
+.DS_Store
+Thumbs.db
+# Logs and temp
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+*.orig
+*.rej
+*.class
+*.apk
+*.ap_
+*.dex
+*.hprof
+*.lock
+# Sensitive keys
+*.keystore
+*.jks
+# Native/3rd-party binaries
+*.so
+*.aar
+*.jar
+/app/libs/*.aar
+/app/libs/*.jar
+# Test/coverage outputs
+/app/build/outputs/
+/app/build/reports/
+/app/coverage/
+# VSCode/other IDEs
+.vscode/
+.settings/
+# Misc
+.env
+*.db
+*.sqlite
+*.csv
+*.zip
+*.tar.gz
+*.7z
+*.rar
+*.tgz
+*.gz
+*.bin
