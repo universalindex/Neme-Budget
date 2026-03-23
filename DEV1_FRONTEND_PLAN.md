@@ -60,14 +60,17 @@ data class Transaction(
 )
 
 enum class Category(val label: String, val emoji: String) {
-    DINING("Dining", "🍔"),
-    GROCERIES("Groceries", "🛒"),
-    GAS("Gas", "⛽"),
-    BILLS("Bills", "💡"),
-    ENTERTAINMENT("Entertainment", "🎬"),
-    SHOPPING("Shopping", "🛍️"),
-    TRANSPORT("Transport", "🚗"),
-    OTHER("Other", "💳")
+  DINING("Dining", "🍔"),
+  GROCERIES("Groceries", "🛒"),
+  GAS("Gas", "⛽"),
+  BILLS("Bills", "💡"),
+  SUBSCRIPTIONS("Subscriptions", "📺"),
+  ENTERTAINMENT("Entertainment", "🎬"),
+  SHOPPING("Shopping", "🛍️"),
+  TRANSPORT("Transport", "🚗"),
+  HEALTH("Health", "💊"),
+  TRAVEL("Travel", "✈️"),
+  OTHER("Other", "💳")
 }
 
 data class Budget(
