@@ -1,12 +1,17 @@
 package com.example.nemebudget.llm
 
-import android.app.ActivityManager
+import ai.mlc.mlcllm.MLCEngine
+import ai.mlc.mlcllm.OpenAIProtocol
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
 import android.util.Log
 import org.json.JSONObject
+import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.channels.consumeEach
 
 /**
  * Data class representing the strict JSON structure we force the LLM to output.
@@ -21,53 +26,146 @@ data class ExtractedTransaction(
 
 class LlmPipeline(private val context: Context) {
 
+    // The absolute path to where you placed the model in the Device File Explorer
+    private val modelPath: String
+        get() = File(context.filesDir, "gemma-2b-it-q4f16_1-MLC").absolutePath
+
+    // Based on the 'Gemma-2-2B' entry in your compiled roster, this is the most likely lib name.
+    // Note: If you have Gemma 1 weights on the phone, you should update them to Gemma 2 weights.
+    private val modelLib = "gemma2_2b_q4f16_1"
+
+    private val jsonSchema = """
+        {
+          "type": "object",
+          "properties": {
+            "merchant": {"type": "string"},
+            "amount": {"type": "number"},
+            "category": {"type": "string"}
+          },
+          "required": ["merchant", "amount", "category"]
+        }
+    """.trimIndent()
+
+    private val systemPrompt = """
+        You are a strict data extractor. Read the bank notification and extract the merchant name, amount, and a short category (e.g., Dining, Groceries, Utility, Shopping). 
+        Your output MUST be a JSON object that strictly conforms to the provided schema: $jsonSchema.
+        No additional text, greetings, or explanations.
+    """.trimIndent()
+
+    private var mlcEngine: MLCEngine? = null
+    private val _isEngineLoaded = MutableStateFlow(false)
+    val isEngineLoaded: StateFlow<Boolean> = _isEngineLoaded
+
     /**
-     * This is a placeholder for the actual C++/MLC/MediaPipe LLM call.
-     * Right now, it simulates the LLM taking text and returning a JSON string.
+     * Loads the MLC LLM engine and model into RAM.
      */
-    suspend fun simulateLlmInference(rawNotification: String): String {
-        // Simulate a 2-second delay for loading the model into RAM and thinking
-        kotlinx.coroutines.delay(2000)
+    private fun loadEngine() {
+        if (mlcEngine != null) {
+            Log.d("LlmPipeline", "MLC Engine already loaded.")
+            return
+        }
         
-        // In reality, the LLM with grammar flags would generate this perfectly formatted string.
-        // For testing, we are mocking what the LLM *would* say.
-        return if (rawNotification.contains("Starbucks", ignoreCase = true)) {
-            """{"merchant": "Starbucks", "amount": 5.40, "category": "Dining"}"""
-        } else if (rawNotification.contains("Amazon", ignoreCase = true)) {
-            // Let's mock an LLM hallucination where it gets the amount wrong!
-            """{"merchant": "Amazon", "amount": 999.99, "category": "Shopping"}"""
-        } else {
-            """{"merchant": "Unknown", "amount": 0.0, "category": "Misc"}"""
+        // ADDED VERSION MARKER TO VERIFY DEPLOYMENT
+        Log.d("LlmPipeline", "[VERSION 2] WAKING UP ENGINE: Using lib '$modelLib' from path '$modelPath'")
+        try {
+            val engine = MLCEngine()
+            engine.reload(modelPath, modelLib)
+            mlcEngine = engine
+            
+            Log.d("LlmPipeline", "MLC Engine loaded successfully.")
+            _isEngineLoaded.value = true
+
+        } catch (e: Exception) {
+            Log.e("LlmPipeline", "CRITICAL: Failed to load MLC Engine with lib '$modelLib'", e)
+            mlcEngine = null 
+            _isEngineLoaded.value = false
+            throw e 
         }
     }
 
     /**
-     * The Anti-Hallucination "Ctrl+F" Verifier.
-     * Takes the LLM's JSON string, parses it, and verifies it against the original text.
+     * Unloads the MLC LLM engine from RAM.
      */
+    fun unloadEngine() {
+        mlcEngine?.unload()
+        mlcEngine = null
+        _isEngineLoaded.value = false
+        Log.d("LlmPipeline", "MLC Engine unloaded from RAM.")
+    }
+
+    /**
+     * Runs inference. Note: We now keep the engine loaded to avoid 2GB reload lag.
+     */
+    suspend fun simulateLlmInference(rawNotification: String): String = withContext(Dispatchers.IO) {
+        val modelDir = File(modelPath)
+        if (!modelDir.exists() || !modelDir.isDirectory) {
+            Log.e("LlmPipeline", "Model not found at $modelPath!")
+            return@withContext """{"merchant": "Error", "amount": 0.0, "category": "ModelNotFound"}"""
+        }
+
+        var llmJsonString = """{"merchant": "Error", "amount": 0.0, "category": "EngineFailure"}""" 
+        try {
+            if (mlcEngine == null) {
+                loadEngine()
+            }
+
+            val messages = listOf(
+                OpenAIProtocol.ChatCompletionMessage(
+                    role = OpenAIProtocol.ChatCompletionRole.system,
+                    content = systemPrompt
+                ),
+                OpenAIProtocol.ChatCompletionMessage(
+                    role = OpenAIProtocol.ChatCompletionRole.user,
+                    content = "Notification: \"$rawNotification\""
+                )
+            )
+
+            Log.d("LlmPipeline", "THINKING: Sending request to MLC Engine...")
+            val sb = StringBuilder()
+            val channel = mlcEngine?.chat?.completions?.create(
+                messages = messages,
+                response_format = null
+            )
+
+            // Consume the stream and rebuild the full JSON response.
+            channel?.consumeEach { response ->
+                val text = response.choices.firstOrNull()?.delta?.content
+                if (text != null) {
+                    sb.append(text)
+                }
+            }
+
+            val finalOutput = sb.toString().trim()
+            if (finalOutput.isNotEmpty()) {
+                llmJsonString = finalOutput
+            }
+            Log.d("LlmPipeline", "MLC Engine raw output: $llmJsonString")
+
+        } catch (e: Exception) {
+            Log.e("LlmPipeline", "MLC Engine inference failed", e)
+            unloadEngine()
+        }
+        return@withContext llmJsonString
+    }
+
     fun processAndVerify(rawNotification: String, llmJsonString: String): ExtractedTransaction {
         return try {
-            // 1. Parse the guaranteed JSON (thanks to Grammar Flags)
             val jsonObject = JSONObject(llmJsonString)
             val merchant = jsonObject.getString("merchant")
             val amount = jsonObject.getDouble("amount")
             val category = jsonObject.getString("category")
 
-            // 2. The "Ctrl+F" Verification Check
             var isVerified = true
             var notes = "Verified successfully."
             val rawLower = rawNotification.lowercase(Locale.ROOT)
 
-            // Check Merchant
-            if (merchant != "Unknown" && !rawLower.contains(merchant.lowercase(Locale.ROOT))) {
+            if (merchant != "Unknown" && merchant != "Error" && !rawLower.contains(merchant.lowercase(Locale.ROOT))) {
                 isVerified = false
                 notes = "FAILED: Merchant '$merchant' not found in original text."
             }
 
-            // Check Amount (Checking if the raw string contains the number)
-            // Note: In real life, amounts might have commas or currency symbols, so this needs to be robust.
             val amountString = amount.toString()
-            if (!rawNotification.contains(amountString)) {
+            if (amount > 0.0 && !rawLower.contains(amountString)) { 
                 isVerified = false
                 notes = "FAILED: Amount '$amountString' not found in original text."
             }
@@ -80,46 +178,7 @@ class LlmPipeline(private val context: Context) {
         }
     }
 
-    /**
-     * Attempts to determine the best LLM device (GPU, NPU, or CPU) available on the device.
-     * This is a conceptual check. Actual MLC LLM initialization will provide concrete feedback.
-     */
     fun getBestLlmDevice(): String {
-        // We'll try to find the "best" device for MLC LLM.
-        // MLC LLM uses strings like "vulkan" (for GPU/NPU via Vulkan), "cpu".
-
-        // 1. Prioritize NPU/GPU via Vulkan (most modern Android devices)
-        // This is a heuristic. MLC LLM's internal logic will decide if it uses NNAPI under Vulkan if it's the best backend.
-        val vulkanSupported = checkVulkanSupport()
-        if (vulkanSupported) {
-            Log.d("LlmPipeline", "Vulkan (GPU/NPU) appears supported. Will try to use 'vulkan'.")
-            return "vulkan"
-        }
-
-        // 2. Fallback to CPU
-        Log.d("LlmPipeline", "Vulkan not fully supported or suitable. Falling back to 'cpu'.")
-        return "cpu"
-    }
-
-    /**
-     * A basic check for Vulkan API support on the device.
-     * Vulkan is often the underlying API MLC LLM uses for GPU/NPU acceleration.
-     */
-    private fun checkVulkanSupport(): Boolean {
-        // We need at least API 24 (Android 7.0) for basic Vulkan support features
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            Log.d("LlmPipeline", "Vulkan not supported on API < 24.")
-            return false
-        }
-
-        // Check for general Vulkan hardware support at a reasonable level
-        val hasVulkanHardwareLevel = context.packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)
-        val hasVulkanHardwareVersion = context.packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_VERSION)
-        
-        Log.d("LlmPipeline", "Vulkan Hardware Level: $hasVulkanHardwareLevel, Vulkan Hardware Version: $hasVulkanHardwareVersion")
-
-        // For simplicity, we'll consider Vulkan supported if either a hardware level or version feature is present.
-        // A real app might check for a specific hardware level (e.g., FEATURE_VULKAN_HARDWARE_LEVEL_1_1)
-        return hasVulkanHardwareLevel || hasVulkanHardwareVersion
+        return if (mlcEngine != null) "MLC Loaded" else "Unknown (Engine not loaded)"
     }
 }

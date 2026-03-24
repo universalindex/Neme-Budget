@@ -114,3 +114,13 @@ This file tracks significant changes and progress for the Neme Budget app. Pleas
 * Updated `app/src/main/java/com/example/nemebudget/ui/screens/SettingsScreen.kt` to show queued count, processing status text, and a disabled/loading `Process Now` button.
 * Wired app-open processing trigger in `app/src/main/java/com/example/nemebudget/MainActivity.kt` via `LaunchedEffect` so queued work starts once at launch.
 
+---
+
+## 2026-03-24 - AI Assistant
+
+### LLM Pipeline Hardening & API Resolution
+* Decompiled `mlc4j.aar` to resolve `MLCEngine` and `Chat` API signatures, identifying correct instance-based `reload` and streaming `completions` patterns.
+* Implemented real-time inference streaming in `LlmPipeline.kt` using `ChatCompletionMessage` and `consumeEach` on the response channel.
+* Troubleshoot TVM runtime crashes (`Cannot find system lib`) by verifying `model_lib` name expectations against the C++ layer via Logcat.
+* Optimized engine persistence: transitioned to keeping the model loaded across inference calls to eliminate 2GB reload latency.
+* Verified local model weights path and configuration (`mlc-chat-config.json`) via Device File Explorer inspection to align code with on-device filesystem.
