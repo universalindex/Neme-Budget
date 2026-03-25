@@ -125,3 +125,91 @@ This file tracks significant changes and progress for the Neme Budget app. Pleas
 * Successfully matched the compiled kernel string (`qwen3_q4f16_1_1431bce2f7643ad37bb21ddc71153223`) and established a connection to the native library.
 * **Current Blocker:** Encountered a hard OS-level restriction (`Cannot open libOpenCL!`) because the compiled `.aar` defaults to OpenCL, but the physical Android device (with a Mali GPU) enforces strict linker namespace security that blocks untrusted apps from accessing `/vendor/lib64/libOpenCL.so`.
 * **Resolution Plan Required:** The `mlc4j.aar` must be recompiled on the host machine with explicitly forced Vulkan support (`set(USE_OPENCL OFF)`, `set(USE_VULKAN ON)`) to bypass Android's OpenCL namespace restrictions. Kotlin code is verified complete and awaiting the updated binary.
+
+---
+
+## 2026-03-25 - AI Assistant
+
+### Frontend Implementation (Next Steps Through Mar 27)
+* Rebuilt `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt` into a full ledger flow with:
+  * date-grouped sections with sticky headers,
+  * complete category chip filtering (not limited to the first four categories),
+  * confidence bars and AI parse marker display,
+  * transaction edit bottom sheet for merchant/category/amount corrections.
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/TransactionsViewModel.kt` to:
+  * expose reactive `query` and `filter` state for Compose collection,
+  * support `saveEdit(original, updated)` and append a deduplicated teaching rule (`"merchant = category"`) into settings when category corrections are made.
+* Expanded `app/src/main/java/com/example/nemebudget/ui/screens/BudgetsScreen.kt` with Day 6 budget UX features:
+  * animated budget progress cards,
+  * over-budget warning banner,
+  * add budget FAB,
+  * long-press actions for edit/delete,
+  * add/edit budget dialog with category + limit inputs.
+* Rationale: this closes the main Mar 25-26 Transactions milestones and advances Mar 27 Budgets functionality while staying compatible with the existing shared repository contract.
+
+---
+
+## 2026-03-25 - AI Assistant
+
+### Transactions Screen Milestone Checked Off
+* Marked Days 4–5 (Transactions Screen) as complete in `DEV1_FRONTEND_PLAN.md` after verifying all required features are implemented in code:
+  * Grouped list by date with sticky headers (`TransactionsScreen.kt`)
+  * Transaction row with emoji, merchant, category, amount, AI badge, and confidence bar
+  * Edit bottom sheet for transaction correction and AI teaching flow
+  * Search/filter bar with chips for all categories
+* Rationale: All checklist items for this milestone are present and functional in the current codebase.
+
+---
+
+## 2026-03-25 - AI Assistant
+
+### Settings Milestone Implemented + Plan Progress Logged
+* Completed Days 8–9 Settings scope in `app/src/main/java/com/example/nemebudget/ui/screens/SettingsScreen.kt` with:
+  * primary bank input wired to debounced autosave,
+  * ignore-app toggles from a predefined package list,
+  * custom AI rule add/remove chip workflow,
+  * model status card for downloading vs ready states,
+  * data management controls for CSV export, Process Now status, and destructive wipe confirmation dialog.
+* Extended `app/src/main/java/com/example/nemebudget/viewmodel/SettingsViewModel.kt` with:
+  * 500ms debounce job for `updatePrimaryBank`,
+  * predefined `knownSpamApps` list for UI toggles,
+  * deduplicated custom rule insertion,
+  * existing processing/export/wipe flows preserved for repository contract compatibility.
+* Checked off completed pre-integration milestones in `DEV1_FRONTEND_PLAN.md`:
+  * Days 6–7 Budgets goal + Steps 1–3,
+  * Days 8–9 Settings goal + Steps 1–5.
+* Validation: Ran `:app:testDebugUnitTest` successfully after these updates.
+* Rationale: closes all planned frontend work up to (but not including) Integration Day while keeping `FakeRepository` wiring intact for the planned one-line swap later.
+
+---
+
+## 2026-03-25 - AI Assistant
+
+### Settings UX Follow-Up: Ignore Apps Submenu
+* Refined `app/src/main/java/com/example/nemebudget/ui/screens/SettingsScreen.kt` to move ignored app toggles into a submenu flow:
+  * Main settings now shows `Ignore apps` as a dedicated entry row with selected-count summary.
+  * Added an `IgnoreAppsScreen` subview (`Settings -> Ignore apps`) that contains the toggle list.
+* Added helper copy clarifying behavior: ignored app selections are saved immediately and are intended to apply to notification ingest once the listener pipeline is connected.
+* Validation: Ran `:app:testDebugUnitTest` successfully after the submenu refactor.
+
+---
+
+## 2026-03-25 - AI Assistant
+
+### Privacy/Scale Upgrade: Ignore Any App (Not Just Presets)
+* Extended ignore-app controls so users can filter far beyond the original fixed spam list:
+  * `Ignore Apps` submenu now loads launchable apps from the device using `PackageManager`,
+  * added app/package search,
+  * added manual package entry (`com.example.app`) to support edge cases and non-launcher sources.
+* Updated toggle behavior to explicit set/unset semantics via `setIgnoredApp(packageName, ignored)` in `app/src/main/java/com/example/nemebudget/viewmodel/SettingsViewModel.kt` so UI can safely drive dynamic lists.
+* Preserved compatibility with current architecture: choices persist in `AppSettings.ignoredApps` now; they are intended to be enforced on live notification ingest once the NotificationListener/real pipeline is wired.
+* Validation: Ran `:app:testDebugUnitTest` successfully after this update.
+
+---
+
+## 2026-03-25 - AI Assistant
+
+### Plan Note Added: Auto-Suggest Ignore Apps From Notifications
+* Updated `DEV1_FRONTEND_PLAN.md` (Days 8–9, Step 2) with a new unchecked follow-up item to auto-discover notification source packages after listener integration and surface them as suggested ignore toggles.
+* Kept this item explicitly post-integration and user-confirmed to preserve privacy control and avoid implying the listener pipeline is already active.
+

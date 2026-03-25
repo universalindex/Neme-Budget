@@ -9,13 +9,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
     private val searchQuery = MutableStateFlow("")
     private val selectedFilter = MutableStateFlow<Category?>(null)
+
+    val query: StateFlow<String> = searchQuery
+    val filter: StateFlow<Category?> = selectedFilter
 
     val transactions: StateFlow<List<Transaction>> = repo.getAllTransactions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -39,14 +42,19 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
         selectedFilter.value = category
     }
 
-    fun saveEdit(transaction: Transaction) {
+    fun saveEdit(original: Transaction, updated: Transaction) {
         viewModelScope.launch {
-            repo.updateTransaction(transaction)
+            repo.updateTransaction(updated)
+
+            if (original.category != updated.category) {
+                val newRule = "${original.merchant.trim()} = ${updated.category.label}"
+                val currentSettings = repo.getSettings().first()
+                val hasRule = currentSettings.customRules.any { it.equals(newRule, ignoreCase = true) }
+                if (!hasRule) {
+                    repo.saveSettings(currentSettings.copy(customRules = currentSettings.customRules + newRule))
+                }
+            }
         }
     }
-
-    fun currentQuery(): String = searchQuery.value
-
-    fun currentFilter(): Category? = selectedFilter.value
 }
 

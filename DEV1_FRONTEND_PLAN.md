@@ -17,16 +17,17 @@ after that, you never block each other.
 
 ---
 
-## 🔴 Day 1 (March 22) — Contracts & Scaffolding
+## [x] 🔴 Day 1 (March 22) — Contracts & Scaffolding 
 > **Goal:** Android project running, shared data contracts committed to Git, zero waiting.
+- [x] Day 1 goal
 
-### Step 1 — Create the Android Project
+### [x] Step 1 — Create the Android Project
 1. Open Android Studio → New Project → **Empty Activity (Jetpack Compose)**
 2. Package name: `com.zerocloudbudget`
 3. Min SDK: **API 26** (Android 8.0) — required for NotificationListenerService reliability
 4. Language: **Kotlin**, Build: **Gradle (KTS)**
 
-### Step 2 — Add Your Dependencies to `build.gradle.kts`
+### [x] Step 2 — Add Your Dependencies to `build.gradle.kts`
 ```kotlin
 // UI & Navigation
 implementation("androidx.compose.ui:ui:1.6.0")
@@ -52,7 +53,7 @@ implementation("androidx.datastore:datastore-preferences:1.0.0")
 implementation("androidx.work:work-runtime-ktx:2.10.1")
 ```
 
-### Step 3 — Define Shared Data Classes (COMMIT THESE FIRST — call Noah before writing a single line of logic)
+### [x] Step 3 — Define Shared Data Classes (COMMIT THESE FIRST — call Noah before writing a single line of logic)
 Create `model/SharedModels.kt`. **Both of you must approve this before either of you writes any logic.**
 
 ```kotlin
@@ -101,7 +102,7 @@ data class ModelStatus(
 )
 ```
 
-### Step 4 — Define the Repository Interface (ALSO COMMIT THIS)
+### [x] Step 4 — Define the Repository Interface (ALSO COMMIT THIS)
 Create `repository/AppRepository.kt`:
 ```kotlin
 interface AppRepository {
@@ -120,7 +121,7 @@ interface AppRepository {
 }
 ```
 
-### Step 5 — Create Your FakeRepository
+### [x] Step 5 — Create Your FakeRepository
 Create `repository/FakeRepository.kt`. This lets you build the full UI immediately.
 ```kotlin
 class FakeRepository : AppRepository {
@@ -133,7 +134,7 @@ class FakeRepository : AppRepository {
 ```
 **You will swap this for Noah's `RealRepository` on March 30. It should be a 1-line change.**
 
-### Step 6 — Navigation Shell
+### [x] Step 6 — Navigation Shell
 Set up bottom nav with 4 tabs: **Dashboard, Transactions, Budgets, Settings**
 ```kotlin
 // Use NavHost + Scaffold + NavigationBar
@@ -143,10 +144,11 @@ Set up bottom nav with 4 tabs: **Dashboard, Transactions, Budgets, Settings**
 
 ---
 
-## 🟠 Days 2–3 (March 23–24) — ViewModels + Dashboard Screen
+## [x] 🟠 Days 2–3 (March 23–24) — ViewModels + Dashboard Screen
 > **Goal:** ViewModel layer complete for all 4 screens, Dashboard looks beautiful with fake data.
+- [x] Days 2–3 goal
 
-### Step 1 — Write All 4 ViewModels First
+### [x] Step 1 — Write All 4 ViewModels First
 This is your Day 2 priority. ViewModels are what connect Noah's repository to your composables.
 Create `viewmodel/DashboardViewModel.kt`:
 ```kotlin
@@ -210,13 +212,13 @@ fun processNow() // calls repository/pipeline trigger
 fun processOnAppOpenIfNeeded() // called once from app shell
 ```
 
-### Step 2 — Dashboard: "Safe to Spend" Hero Card
+### [x] Step 2 — Dashboard: "Safe to Spend" Hero Card
 - Collect `safeToSpend` from `DashboardViewModel`
 - Display as a large bold number at top center
 - Gradient card background: dark green → teal for positive, dark red for negative
 - Animate the number counting up on first composition using `animateFloatAsState`
 
-### Step 3 — Dashboard: Spending Donut Chart
+### [x] Step 3 — Dashboard: Spending Donut Chart
 ```kotlin
 // Collect spendingByCategory from ViewModel
 // Feed into Vico PieChart composable
@@ -224,22 +226,23 @@ fun processOnAppOpenIfNeeded() // called once from app shell
 // Tap a slice → highlight it + show category total in center
 ```
 
-### Step 4 — Dashboard: Recent Transactions Widget
+### [x] Step 4 — Dashboard: Recent Transactions Widget
 - Show last 5 transactions as a mini-list
 - Each row: `[Emoji] | Merchant | -$Amount | Date | ✨ if isAiParsed`
 - Confidence dot: tiny colored circle (green/yellow/red) from `confidence` float
 - "See All" → navigate to Transactions tab
 
-### Step 5 — Dashboard: Month Selector Header
+### [x] Step 5 — Dashboard: Month Selector Header
 - `< March 2026 >` arrows call `viewModel.previousMonth()` / `viewModel.nextMonth()`
 - All data on screen re-filters automatically via the StateFlow chain
 
 ---
 
-## 🟡 Days 4–5 (March 25–26) — Transactions Screen
+## [x] 🟡 Days 4–5 (March 25–26) — Transactions Screen
 > **Goal:** Full ledger with AI confidence indicators and the edit-to-teach flow.
+- [x] Days 4–5 goal
 
-### Step 1 — Grouped List by Date
+### [x] Step 1 — Grouped List by Date
 ```kotlin
 val grouped = filteredTransactions.groupBy { txn ->
     SimpleDateFormat("MMMM d, yyyy", Locale.US).format(Date(txn.date))
@@ -247,13 +250,13 @@ val grouped = filteredTransactions.groupBy { txn ->
 // LazyColumn with stickyHeader {} for each date group
 ```
 
-### Step 2 — Transaction Row Composable
+### [x] Step 2 — Transaction Row Composable
 - Left: Category emoji in a colored filled circle
 - Middle: Merchant (bold, 1 line) + Category label (muted, small)
 - Right: `-$XX.XX` in red/coral + ✨ badge if `isAiParsed`
 - Bottom edge: 2px confidence bar (full width, color = green/yellow/red based on `confidence`)
 
-### Step 3 — Edit Bottom Sheet (The "Teach AI" Flow)
+### [x] Step 3 — Edit Bottom Sheet (The "Teach AI" Flow)
 ```kotlin
 // ModalBottomSheet slides up on tap
 // Fields: Merchant (OutlinedTextField), Category (dropdown ExposedDropdownMenu), Amount
@@ -263,17 +266,18 @@ val grouped = filteredTransactions.groupBy { txn ->
 //   Noah's AI will pick this up on the next notification automatically
 ```
 
-### Step 4 — Search & Filter Bar
+### [x] Step 4 — Search & Filter Bar
 - `OutlinedTextField` at top for merchant name search
 - `LazyRow` of filter chips below: All | Dining | Groceries | Gas | etc.
 - Chips update `viewModel.selectedFilter` which flows through to `filteredTransactions`
 
 ---
 
-## 🟢 Days 6–7 (March 27–28) — Budgets Screen
+## [x] 🟢 Days 6–7 (March 27–28) — Budgets Screen
 > **Goal:** Progress bars per category with live color warnings.
+- [x] Days 6–7 goal
 
-### Step 1 — Budget Card Composable
+### [x] Step 1 — Budget Card Composable
 ```kotlin
 @Composable
 fun BudgetCard(budget: Budget) {
@@ -290,22 +294,23 @@ fun BudgetCard(budget: Budget) {
 }
 ```
 
-### Step 2 — Add / Edit Budget Dialog
+### [x] Step 2 — Add / Edit Budget Dialog
 - FAB (+) button opens `AlertDialog`: category picker dropdown + amount text field
 - "Save" calls `viewModel.upsertBudget()`
 - Long-press a budget card → shows edit/delete options
 
-### Step 3 — Over-Budget Alert Banner
+### [x] Step 3 — Over-Budget Alert Banner
 - `AnimatedVisibility` banner at top of screen whenever any category > 100%
 - Red background, white text: "⚠️ Dining is over budget"
 - Tapping it animates the `LazyColumn` scroll to the offending card
 
 ---
 
-## 🔵 Days 8–9 (March 29–30) — Settings Screen + CSV Export + Batch Controls
+## [x] 🔵 Days 8–9 (March 29–30) — Settings Screen + CSV Export + Batch Controls
 > **Goal:** All controls Noah needs, shipped early. CSV export fully wired.
+- [x] Days 8–9 goal
 
-### Step 1 — Primary Bank Input
+### [x] Step 1 — Primary Bank Input
 ```kotlin
 OutlinedTextField(
     value = settings.primaryBank,
@@ -316,7 +321,7 @@ OutlinedTextField(
 // viewModelScope.launch { delay(500); repo.saveSettings(current) }
 ```
 
-### Step 2 — App Ignore Toggles
+### [x] Step 2 — App Ignore Toggles
 Pre-filled list in your ViewModel:
 ```kotlin
 val knownSpamApps = listOf(
@@ -328,8 +333,9 @@ val knownSpamApps = listOf(
 )
 // Each → Switch composable, toggled = added to settings.ignoredApps
 ```
+- [ ] **Post-integration follow-up:** when notification listener ingest is live, auto-discover source package names from received notifications and surface new packages in `Settings -> Ignore apps` as suggested toggles (user-confirmed before adding to `settings.ignoredApps`).
 
-### Step 3 — Custom AI Rules Input
+### [x] Step 3 — Custom AI Rules Input
 ```kotlin
 // OutlinedTextField: user types "Chevron = Gas"
 // On submit (Enter or button): appends to settings.customRules, saves
@@ -337,7 +343,7 @@ val knownSpamApps = listOf(
 // These flow directly into Noah's Qwen prompt — no extra wiring needed
 ```
 
-### Step 4 — Qwen Model Status Card
+### [x] Step 4 — Qwen Model Status Card
 ```kotlin
 // Collect repo.getModelStatus() → ModelStatus from Noah's ModelDownloadManager
 val modelStatus by viewModel.modelStatus.collectAsStateWithLifecycle()
@@ -349,7 +355,7 @@ val modelStatus by viewModel.modelStatus.collectAsStateWithLifecycle()
 //   Green checkmark + "Qwen 2.5 1.5B · Ready · ${modelStatus.modelSizeLabel} on device"
 ```
 
-### Step 5 — Data Management Section
+### [x] Step 5 — Data Management Section
 ```kotlin
 // Transaction count row: "📦 143 transactions stored locally"
 // [Export to CSV] button -> calls viewModel.exportCsv()
@@ -371,10 +377,11 @@ startActivity(Intent.createChooser(shareIntent, "Export transactions"))
 
 ---
 
-## ⚡ March 30–31 — INTEGRATION DAY
+## [ ] ⚡ March 30–31 — INTEGRATION DAY
 > **Goal:** Swap FakeRepository for Noah's RealRepository. Hybrid pipeline verified end-to-end.
+- [ ] Integration day goal
 
-### Step 1 — Wire Up Real Repository
+### [ ] Step 1 — Wire Up Real Repository
 In your Application class or ViewModel factory:
 ```kotlin
 // Before:
@@ -384,7 +391,7 @@ val repo: AppRepository = RealRepository(database, dataStore, modelDownloadManag
 ```
 This must be a 1-line change. If anything breaks, the contract was violated somewhere — fix it together.
 
-### Step 2 — Do NOT Touch Noah's Code
+### [ ] Step 2 — Do NOT Touch Noah's Code
 Your job today is verification, not debugging his pipeline. Test:
 1. Grant notification access on the physical device
 2. Fire a test ADB notification (Noah has the script)
@@ -396,9 +403,10 @@ Your job today is verification, not debugging his pipeline. Test:
 
 ---
 
-## 🏁 April 1–2 — Onboarding, Polish & Demo Prep
+## [ ] 🏁 April 1–2 — Onboarding, Polish & Demo Prep
+- [ ] April 1–2 goal
 
-### Step 1 — Onboarding Flow (3 screens, all Eli)
+### [ ] Step 1 — Onboarding Flow (3 screens, all Eli)
 **Screen 1 — Welcome:**
 - Big headline: *"Your money. Your device. No cloud."*
 - 3 short bullets: "Local AI", "Zero bank logins", "Encrypted on your phone"
@@ -416,12 +424,12 @@ Your job today is verification, not debugging his pipeline. Test:
 - *"Downloading Qwen AI to your device — this only happens once"*
 - Auto-advances to Dashboard when `isDownloaded == true`
 
-### Step 2 — Dark Mode Finalization
+### [ ] Step 2 — Dark Mode Finalization
 - Audit every screen in both light and dark system themes
 - Test on the physical device you will demo on (judges see a real phone, not an emulator)
 - Make sure chart colors have enough contrast in both modes
 
-### Step 3 — Demo Script (Practice This 5+ Times)
+### [ ] Step 3 — Demo Script (Practice This 5+ Times)
 This is your 3-minute live demo script for April 4th:
 ```
 1. Open app -> show Welcome screen, explain local-only privacy
@@ -435,7 +443,7 @@ This is your 3-minute live demo script for April 4th:
 9. Show Transactions tab -> filter by Dining -> show confidence dots
 ```
 
-### Step 4 — Demo Video (1–2 min, due April 2)
+### [ ] Step 4 — Demo Video (1–2 min, due April 2)
 Record on a physical device using screen recording + narration:
 - Clip 1 (15s): Welcome screen, explain the concept
 - Clip 2 (30s): Notification captured -> manual/app-open batch process -> chart update
@@ -443,7 +451,7 @@ Record on a physical device using screen recording + narration:
 - Clip 4 (15s): Settings screen, explain ignore toggles, AI rules, and Process Now control
   Edit in CapCut or DaVinci Resolve. Upload to YouTube/Vimeo for Devpost.
 
-### Step 5 — Devpost (Your Section)
+### [ ] Step 5 — Devpost (Your Section)
 Write the **User Experience** and **Innovation** sections:
 - UX: clean Compose UI, real-time updates, edit-to-teach flow
 - Innovation: zero bank API, zero cloud, local Qwen AI on-device
@@ -474,4 +482,3 @@ Write the **User Experience** and **Innovation** sections:
 - **Git branches:** `feature/viewmodels`, `feature/dashboard`, `feature/transactions`, etc. Merge to `main` every evening.
 - **Nightly APK share.** Build a debug APK and send it to Noah so he can verify UI wiring to pipeline states.
 - **Make processing visible.** The `Process Now` state feedback is part of the demo story, not just a debug tool.
-

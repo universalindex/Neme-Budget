@@ -6,6 +6,8 @@ import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.ModelStatus
 import com.example.nemebudget.model.ProcessingState
 import com.example.nemebudget.repository.AppRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +15,16 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
+    data class KnownApp(val label: String, val packageName: String)
+
+    val knownSpamApps: List<KnownApp> = listOf(
+        KnownApp("Venmo", "com.venmo"),
+        KnownApp("Cash App", "com.squareup.cash"),
+        KnownApp("WhatsApp", "com.whatsapp"),
+        KnownApp("PayPal", "com.paypal.android.p2pmobile"),
+        KnownApp("Gmail", "com.google.android.gm")
+    )
+
     val settings: StateFlow<AppSettings> = repo.getSettings()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
 
@@ -32,13 +44,19 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     private val _totalCount = MutableStateFlow(0)
     val totalCount: StateFlow<Int> = _totalCount
     private var hasAttemptedStartupProcessing = false
+    private var primaryBankSaveJob: Job? = null
 
     init {
         refreshCount()
     }
 
     fun updatePrimaryBank(bank: String) {
-        saveSettings(settings.value.copy(primaryBank = bank))
+        val updated = settings.value.copy(primaryBank = bank)
+        primaryBankSaveJob?.cancel()
+        primaryBankSaveJob = viewModelScope.launch {
+            delay(500)
+            repo.saveSettings(updated)
+        }
     }
 
     fun toggleIgnoredApp(packageName: String) {
@@ -51,10 +69,27 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
         saveSettings(current.copy(ignoredApps = updated))
     }
 
-    fun addCustomRule(rule: String) {
-        if (rule.isBlank()) return
+    fun setIgnoredApp(packageName: String, ignored: Boolean) {
+        val normalized = packageName.trim()
+        if (normalized.isBlank()) return
         val current = settings.value
-        saveSettings(current.copy(customRules = current.customRules + rule.trim()))
+        val alreadyIgnored = normalized in current.ignoredApps
+        if (alreadyIgnored == ignored) return
+
+        val updated = if (ignored) {
+            current.ignoredApps + normalized
+        } else {
+            current.ignoredApps - normalized
+        }
+        saveSettings(current.copy(ignoredApps = updated))
+    }
+
+    fun addCustomRule(rule: String) {
+        val normalized = rule.trim()
+        if (normalized.isBlank()) return
+        val current = settings.value
+        if (current.customRules.any { it.equals(normalized, ignoreCase = true) }) return
+        saveSettings(current.copy(customRules = current.customRules + normalized))
     }
 
     fun removeCustomRule(rule: String) {
