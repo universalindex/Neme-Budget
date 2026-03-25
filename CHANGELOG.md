@@ -121,6 +121,7 @@ This file tracks significant changes and progress for the Neme Budget app. Pleas
 ### LLM Pipeline Hardening & API Resolution
 * Decompiled `mlc4j.aar` to resolve `MLCEngine` and `Chat` API signatures, identifying correct instance-based `reload` and streaming `completions` patterns.
 * Implemented real-time inference streaming in `LlmPipeline.kt` using `ChatCompletionMessage` and `consumeEach` on the response channel.
-* Troubleshoot TVM runtime crashes (`Cannot find system lib`) by verifying `model_lib` name expectations against the C++ layer via Logcat.
-* Optimized engine persistence: transitioned to keeping the model loaded across inference calls to eliminate 2GB reload latency.
-* Verified local model weights path and configuration (`mlc-chat-config.json`) via Device File Explorer inspection to align code with on-device filesystem.
+* Troubleshoot TVM runtime crashes (`Cannot find system lib`) by iteratively mapping `model_lib` names against `mlc-chat-config.json` and compiled `.so` file hex dumps.
+* Successfully matched the compiled kernel string (`qwen3_q4f16_1_1431bce2f7643ad37bb21ddc71153223`) and established a connection to the native library.
+* **Current Blocker:** Encountered a hard OS-level restriction (`Cannot open libOpenCL!`) because the compiled `.aar` defaults to OpenCL, but the physical Android device (with a Mali GPU) enforces strict linker namespace security that blocks untrusted apps from accessing `/vendor/lib64/libOpenCL.so`.
+* **Resolution Plan Required:** The `mlc4j.aar` must be recompiled on the host machine with explicitly forced Vulkan support (`set(USE_OPENCL OFF)`, `set(USE_VULKAN ON)`) to bypass Android's OpenCL namespace restrictions. Kotlin code is verified complete and awaiting the updated binary.

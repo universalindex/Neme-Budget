@@ -26,13 +26,11 @@ data class ExtractedTransaction(
 
 class LlmPipeline(private val context: Context) {
 
-    // The absolute path to where you placed the model in the Device File Explorer
     private val modelPath: String
-        get() = File(context.filesDir, "gemma-2b-it-q4f16_1-MLC").absolutePath
+        get() = File(context.filesDir, "Qwen3-0.6B-q4f16_1-MLC").absolutePath
 
-    // Based on the 'Gemma-2-2B' entry in your compiled roster, this is the most likely lib name.
-    // Note: If you have Gemma 1 weights on the phone, you should update them to Gemma 2 weights.
-    private val modelLib = "gemma2_2b_q4f16_1"
+    // Reverting to the ONLY name that successfully bypassed the "Cannot find system lib" check.
+    private val modelLib = "qwen3_q4f16_1_1431bce2f7643ad37bb21ddc71153223"
 
     private val jsonSchema = """
         {
@@ -56,17 +54,13 @@ class LlmPipeline(private val context: Context) {
     private val _isEngineLoaded = MutableStateFlow(false)
     val isEngineLoaded: StateFlow<Boolean> = _isEngineLoaded
 
-    /**
-     * Loads the MLC LLM engine and model into RAM.
-     */
     private fun loadEngine() {
         if (mlcEngine != null) {
             Log.d("LlmPipeline", "MLC Engine already loaded.")
             return
         }
         
-        // ADDED VERSION MARKER TO VERIFY DEPLOYMENT
-        Log.d("LlmPipeline", "[VERSION 2] WAKING UP ENGINE: Using lib '$modelLib' from path '$modelPath'")
+        Log.d("LlmPipeline", "[VERSION 2] WAKING UP ENGINE: Attempting to load Qwen with lib '$modelLib' from path '$modelPath'")
         try {
             val engine = MLCEngine()
             engine.reload(modelPath, modelLib)
@@ -83,9 +77,6 @@ class LlmPipeline(private val context: Context) {
         }
     }
 
-    /**
-     * Unloads the MLC LLM engine from RAM.
-     */
     fun unloadEngine() {
         mlcEngine?.unload()
         mlcEngine = null
@@ -93,13 +84,11 @@ class LlmPipeline(private val context: Context) {
         Log.d("LlmPipeline", "MLC Engine unloaded from RAM.")
     }
 
-    /**
-     * Runs inference. Note: We now keep the engine loaded to avoid 2GB reload lag.
-     */
     suspend fun simulateLlmInference(rawNotification: String): String = withContext(Dispatchers.IO) {
         val modelDir = File(modelPath)
+        Log.d("LlmPipeline", "Verifying model path: $modelPath. Exists: ${modelDir.exists()}, Is Directory: ${modelDir.isDirectory()}")
         if (!modelDir.exists() || !modelDir.isDirectory) {
-            Log.e("LlmPipeline", "Model not found at $modelPath!")
+            Log.e("LlmPipeline", "Model not found at $modelPath! Please ensure the folder and its contents are copied correctly.")
             return@withContext """{"merchant": "Error", "amount": 0.0, "category": "ModelNotFound"}"""
         }
 
@@ -127,7 +116,6 @@ class LlmPipeline(private val context: Context) {
                 response_format = null
             )
 
-            // Consume the stream and rebuild the full JSON response.
             channel?.consumeEach { response ->
                 val text = response.choices.firstOrNull()?.delta?.content
                 if (text != null) {
