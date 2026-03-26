@@ -9,8 +9,6 @@ import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.channels.consumeEach
 
 /**
@@ -26,11 +24,12 @@ data class ExtractedTransaction(
 
 class LlmPipeline(private val context: Context) {
 
+    // 1. Pointing to the official weights folder you already have on your phone!
     private val modelPath: String
         get() = File(context.filesDir, "Qwen3-0.6B-q4f16_1-MLC").absolutePath
 
-    // Reverting to the ONLY name that successfully bypassed the "Cannot find system lib" check.
-    private val modelLib = "qwen3_q4f16_1_1431bce2f7643ad37bb21ddc71153223"
+    // 2. The generic execution library hardcoded into the OFFICIAL mlc4j.aar from Maven
+    private val modelLib = "qwen3_q4f16_1"
 
     private val jsonSchema = """
         {
@@ -51,39 +50,43 @@ class LlmPipeline(private val context: Context) {
     """.trimIndent()
 
     private var mlcEngine: MLCEngine? = null
-    private val _isEngineLoaded = MutableStateFlow(false)
-    val isEngineLoaded: StateFlow<Boolean> = _isEngineLoaded
 
+    /**
+     * Loads the MLC LLM engine and model into RAM.
+     */
     private fun loadEngine() {
         if (mlcEngine != null) {
             Log.d("LlmPipeline", "MLC Engine already loaded.")
             return
         }
         
-        Log.d("LlmPipeline", "[VERSION 2] WAKING UP ENGINE: Attempting to load Qwen with lib '$modelLib' from path '$modelPath'")
+        Log.d("LlmPipeline", "[VERSION 2] WAKING UP ENGINE: Attempting to load Qwen with lib '${modelLib}' from path '${modelPath}'")
         try {
             val engine = MLCEngine()
             engine.reload(modelPath, modelLib)
             mlcEngine = engine
             
             Log.d("LlmPipeline", "MLC Engine loaded successfully.")
-            _isEngineLoaded.value = true
 
         } catch (e: Exception) {
-            Log.e("LlmPipeline", "CRITICAL: Failed to load MLC Engine with lib '$modelLib'", e)
+            Log.e("LlmPipeline", "CRITICAL: Failed to load MLC Engine with lib '${modelLib}'", e)
             mlcEngine = null 
-            _isEngineLoaded.value = false
             throw e 
         }
     }
 
+    /**
+     * Unloads the MLC LLM engine from RAM.
+     */
     fun unloadEngine() {
         mlcEngine?.unload()
         mlcEngine = null
-        _isEngineLoaded.value = false
         Log.d("LlmPipeline", "MLC Engine unloaded from RAM.")
     }
 
+    /**
+     * Runs inference. Note: We now keep the engine loaded to avoid 2GB reload lag.
+     */
     suspend fun simulateLlmInference(rawNotification: String): String = withContext(Dispatchers.IO) {
         val modelDir = File(modelPath)
         Log.d("LlmPipeline", "Verifying model path: $modelPath. Exists: ${modelDir.exists()}, Is Directory: ${modelDir.isDirectory()}")
@@ -116,6 +119,7 @@ class LlmPipeline(private val context: Context) {
                 response_format = null
             )
 
+            // Consume the stream and rebuild the full JSON response.
             channel?.consumeEach { response ->
                 val text = response.choices.firstOrNull()?.delta?.content
                 if (text != null) {

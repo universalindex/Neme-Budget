@@ -213,3 +213,12 @@ This file tracks significant changes and progress for the Neme Budget app. Pleas
 * Updated `DEV1_FRONTEND_PLAN.md` (Days 8–9, Step 2) with a new unchecked follow-up item to auto-discover notification source packages after listener integration and surface them as suggested ignore toggles.
 * Kept this item explicitly post-integration and user-confirmed to preserve privacy control and avoid implying the listener pipeline is already active.
 
+---
+
+## 2026-03-26 - AI Assistant
+
+### MLC Architecture Pivot
+* Abandoned custom `.aar` build due to persistent tensor stride mapping mismatches between the C++ blueprint and newly-generated Python model weights (`expected to be compact array` segfaults).
+* Reverted to the official MLC LLM Maven repository (`https://repo.mlc.ai/`) to guarantee version parity between the execution graph and the weights.
+* Configured `settings.gradle.kts` and `app/build.gradle.kts` to pull `ai.mlc:mlc-llm-android:0.1.0-alpha0` dynamically.
+* Kept `.aar` file deleted from `libs/` folder.
