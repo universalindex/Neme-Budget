@@ -116,7 +116,7 @@ class LlmPipeline(private val context: Context) {
             val sb = StringBuilder()
             val channel = mlcEngine?.chat?.completions?.create(
                 messages = messages,
-                response_format = null
+                response_format = OpenAIProtocol.ResponseFormat(type = "json_object")
             )
 
             // Consume the stream and rebuild the full JSON response.
