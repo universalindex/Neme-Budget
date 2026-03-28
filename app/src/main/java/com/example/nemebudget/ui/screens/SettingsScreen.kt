@@ -49,6 +49,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.ProcessingState
 import com.example.nemebudget.viewmodel.SettingsViewModel
 import java.text.SimpleDateFormat
@@ -61,10 +62,11 @@ private data class DeviceAppItem(
 )
 
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel, onOpenLab: () -> Unit) {
+fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLab: () -> Unit) {
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val modelStatus by viewModel.modelStatus.collectAsStateWithLifecycle()
+    val isOptimizing by viewModel.isOptimizing.collectAsStateWithLifecycle()
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
     val pendingCount by viewModel.pendingNotificationCount.collectAsStateWithLifecycle()
     val processingState by viewModel.processingState.collectAsStateWithLifecycle()
@@ -188,6 +190,19 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenLab: () -> Unit) {
                             progress = { modelStatus.downloadProgress },
                             modifier = Modifier.fillMaxWidth()
                         )
+                    } else if (!modelStatus.isGpuOptimized) {
+                        Text("Model is ready, but needs to be optimized for your device's GPU. This happens once and takes ~1 minute.")
+                        Button(
+                            onClick = { viewModel.optimizeEngine(pipeline) },
+                            enabled = !isOptimizing,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (isOptimizing) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.size(8.dp))
+                            }
+                            Text(if (isOptimizing) "Compiling Shaders..." else "Optimize Now")
+                        }
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(
@@ -195,7 +210,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenLab: () -> Unit) {
                                 contentDescription = "Model ready",
                                 tint = MaterialTheme.colorScheme.primary
                             )
-                            Text("Qwen 2.5 1.5B - Ready - ${modelStatus.modelSizeLabel} on device")
+                            Text("Qwen 3 0.6B - Ready - ${modelStatus.modelSizeLabel} on device")
                         }
                     }
                 }
@@ -427,4 +442,3 @@ private fun loadInstalledLaunchableApps(packageManager: PackageManager): List<De
         }
         .distinctBy { it.packageName }
 }
-

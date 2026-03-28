@@ -2,6 +2,7 @@ package com.example.nemebudget.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.ModelStatus
 import com.example.nemebudget.model.ProcessingState
@@ -32,7 +33,7 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
         .stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5_000),
-            ModelStatus(isDownloaded = false, downloadProgress = 0f, modelSizeLabel = "Unknown")
+            ModelStatus(isDownloaded = false, downloadProgress = 0f, modelSizeLabel = "Unknown", isGpuOptimized = false)
         )
 
     val pendingNotificationCount: StateFlow<Int> = repo.getPendingNotificationCount()
@@ -41,6 +42,9 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     private val _processingState = MutableStateFlow<ProcessingState>(ProcessingState.Idle)
     val processingState: StateFlow<ProcessingState> = _processingState
 
+    private val _isOptimizing = MutableStateFlow(false)
+    val isOptimizing: StateFlow<Boolean> = _isOptimizing
+
     private val _totalCount = MutableStateFlow(0)
     val totalCount: StateFlow<Int> = _totalCount
     private var hasAttemptedStartupProcessing = false
@@ -48,6 +52,17 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
 
     init {
         refreshCount()
+    }
+
+    fun optimizeEngine(pipeline: LlmPipeline) {
+        viewModelScope.launch {
+            _isOptimizing.value = true
+            val success = pipeline.warmUpEngine()
+            if (success) {
+                repo.markGpuOptimized()
+            }
+            _isOptimizing.value = false
+        }
     }
 
     fun updatePrimaryBank(bank: String) {
@@ -160,4 +175,3 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
         }
     }
 }
-

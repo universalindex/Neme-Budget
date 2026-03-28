@@ -30,7 +30,8 @@ class FakeRepository : AppRepository {
         ModelStatus(
             isDownloaded = true,
             downloadProgress = 1f,
-            modelSizeLabel = "1.1 GB"
+            modelSizeLabel = "0.6 GB",
+            isGpuOptimized = false // Start as false so we can test the optimization button
         )
     )
     private val pendingNotificationCountFlow = MutableStateFlow(3)
@@ -91,6 +92,10 @@ class FakeRepository : AppRepository {
     }
 
     override fun getModelStatus(): Flow<ModelStatus> = modelStatusFlow
+
+    override suspend fun markGpuOptimized() {
+        modelStatusFlow.value = modelStatusFlow.value.copy(isGpuOptimized = true)
+    }
 
     override suspend fun getTotalTransactionCount(): Int = transactionsFlow.value.size
 
@@ -203,5 +208,3 @@ class FakeRepository : AppRepository {
         }
     }
 }
-
-

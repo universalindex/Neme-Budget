@@ -40,7 +40,8 @@ data class AppSettings(
 data class ModelStatus(
     val isDownloaded: Boolean,
     val downloadProgress: Float,
-    val modelSizeLabel: String
+    val modelSizeLabel: String,
+    val isGpuOptimized: Boolean = false // Tracks if the TVM shaders have been compiled for this specific device
 )
 
 sealed interface ProcessingState {
@@ -49,5 +50,3 @@ sealed interface ProcessingState {
     data class Success(val processedCount: Int, val completedAtMillis: Long) : ProcessingState
     data class Error(val message: String) : ProcessingState
 }
-
-

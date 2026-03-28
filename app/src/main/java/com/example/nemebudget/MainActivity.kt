@@ -74,6 +74,10 @@ private fun MainApp() {
     val transactionsViewModel = remember { TransactionsViewModel(repo) }
     val budgetsViewModel = remember { BudgetsViewModel(repo) }
     val settingsViewModel = remember { SettingsViewModel(repo) }
+    
+    // Hoist LlmPipeline so it stays in RAM across tab navigation
+    val context = LocalContext.current
+    val pipeline = remember { LlmPipeline(context) }
 
     LaunchedEffect(Unit) {
         settingsViewModel.processOnAppOpenIfNeeded()
@@ -130,29 +134,28 @@ private fun MainApp() {
             composable(AppDestination.Settings.route) {
                 SettingsScreen(
                     viewModel = settingsViewModel,
+                    pipeline = pipeline,
                     onOpenLab = { navController.navigate(AppDestination.Lab.route) }
                 )
             }
             composable(AppDestination.Lab.route) {
-                LlmTestingScreen(modifier = Modifier.fillMaxSize())
+                LlmTestingScreen(pipeline = pipeline, modifier = Modifier.fillMaxSize())
             }
         }
     }
 }
 
 @Composable
-fun LlmTestingScreen(modifier: Modifier = Modifier) {
+fun LlmTestingScreen(pipeline: LlmPipeline, modifier: Modifier = Modifier) {
     var rawNotificationInput by remember { mutableStateOf("Chase: You spent $5.40 at Starbucks today.") }
     var outputTransaction by remember { mutableStateOf<ExtractedTransaction?>(null) }
     var rawLlmJsonOutput by remember { mutableStateOf("") }
     var isProcessing by remember { mutableStateOf(false) }
-    var detectedDevice by remember { mutableStateOf("Detecting...") } // New state for device detection
+    var detectedDevice by remember { mutableStateOf("Detecting...") }
+    var retriesUsed by remember { mutableStateOf(0) }
 
     val coroutineScope = rememberCoroutineScope()
-    val context = LocalContext.current // Get the current Android context
-    val pipeline = remember { LlmPipeline(context) } // Pass context to LlmPipeline
 
-    // Run device detection once when the Composable enters the composition
     LaunchedEffect(Unit) {
         detectedDevice = pipeline.getBestLlmDevice()
     }
@@ -164,7 +167,7 @@ fun LlmTestingScreen(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(text = "The Brain Testing Lab", style = MaterialTheme.typography.headlineMedium)
-        Text(text = "Detected LLM Device: $detectedDevice", style = MaterialTheme.typography.bodySmall) // Display detected device
+        Text(text = "Detected LLM Device: $detectedDevice", style = MaterialTheme.typography.bodySmall)
 
         OutlinedTextField(
             value = rawNotificationInput,
@@ -177,10 +180,11 @@ fun LlmTestingScreen(modifier: Modifier = Modifier) {
             onClick = {
                 coroutineScope.launch {
                     isProcessing = true
-                    val jsonResponse = pipeline.simulateLlmInference(rawNotificationInput)
-                    rawLlmJsonOutput = jsonResponse
-                    val verifiedTransaction = pipeline.processAndVerify(rawNotificationInput, jsonResponse)
-                    outputTransaction = verifiedTransaction
+                    // Call the new extractWithRetry function!
+                    val result = pipeline.extractWithRetry(rawNotificationInput, maxAttempts = 2)
+                    rawLlmJsonOutput = result.rawJson
+                    outputTransaction = result.transaction
+                    retriesUsed = result.retries
                     isProcessing = false
                 }
             },
@@ -192,7 +196,7 @@ fun LlmTestingScreen(modifier: Modifier = Modifier) {
 
         HorizontalDivider()
 
-        Text(text = "Raw LLM JSON Output:", style = MaterialTheme.typography.titleMedium)
+        Text(text = "Raw LLM JSON Output (Retries: $retriesUsed):", style = MaterialTheme.typography.titleMedium)
         Text(text = rawLlmJsonOutput, style = MaterialTheme.typography.bodyMedium)
 
         Spacer(modifier = Modifier.height(8.dp))

@@ -4,6 +4,7 @@ import ai.mlc.mlcllm.MLCEngine
 import ai.mlc.mlcllm.OpenAIProtocol
 import android.content.Context
 import android.util.Log
+import com.example.nemebudget.model.Category
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
@@ -22,52 +23,56 @@ data class ExtractedTransaction(
     val verificationNotes: String
 )
 
+data class ExtractionResult(
+    val rawJson: String,
+    val transaction: ExtractedTransaction,
+    val retries: Int
+)
+
 class LlmPipeline(private val context: Context) {
 
-    // 1. Pointing to the official weights folder you already have on your phone!
     private val modelPath: String
         get() = File(context.filesDir, "Qwen3-0.6B-q4f16_1-MLC").absolutePath
 
-    // 2. The generic execution library hardcoded into the OFFICIAL mlc4j.aar from Maven
     private val modelLib = "qwen3_q4f16_1"
 
+    // Extract exactly the labels the enum uses
+    private val allowedCategories = Category.entries.map { it.label }
+    
+    // Inject the allowed categories directly into the JSON Schema as an enum constraint
     private val jsonSchema = """
         {
           "type": "object",
           "properties": {
             "merchant": {"type": "string"},
             "amount": {"type": "number"},
-            "category": {"type": "string"}
+            "category": {
+              "type": "string",
+              "enum": [${allowedCategories.joinToString(", ") { "\"$it\"" }}]
+            }
           },
           "required": ["merchant", "amount", "category"]
         }
     """.trimIndent()
 
     private val systemPrompt = """
-        You are a strict data extractor. Read the bank notification and extract the merchant name, amount, and a short category (e.g., Dining, Groceries, Utility, Shopping). 
-        Your output MUST be a JSON object that strictly conforms to the provided schema: $jsonSchema.
-        No additional text, greetings, or explanations.
+        You are a strict data extractor. Read the bank notification and extract the merchant name, amount, and a short category.
     """.trimIndent()
 
     private var mlcEngine: MLCEngine? = null
 
-    /**
-     * Loads the MLC LLM engine and model into RAM.
-     */
     private fun loadEngine() {
         if (mlcEngine != null) {
             Log.d("LlmPipeline", "MLC Engine already loaded.")
             return
         }
         
-        Log.d("LlmPipeline", "[VERSION 2] WAKING UP ENGINE: Attempting to load Qwen with lib '${modelLib}' from path '${modelPath}'")
+        Log.d("LlmPipeline", "WAKING UP ENGINE: Attempting to load Qwen with lib '${modelLib}' from path '${modelPath}'")
         try {
             val engine = MLCEngine()
             engine.reload(modelPath, modelLib)
             mlcEngine = engine
-            
             Log.d("LlmPipeline", "MLC Engine loaded successfully.")
-
         } catch (e: Exception) {
             Log.e("LlmPipeline", "CRITICAL: Failed to load MLC Engine with lib '${modelLib}'", e)
             mlcEngine = null 
@@ -75,9 +80,6 @@ class LlmPipeline(private val context: Context) {
         }
     }
 
-    /**
-     * Unloads the MLC LLM engine from RAM.
-     */
     fun unloadEngine() {
         mlcEngine?.unload()
         mlcEngine = null
@@ -85,21 +87,87 @@ class LlmPipeline(private val context: Context) {
     }
 
     /**
-     * Runs inference. Note: We now keep the engine loaded to avoid 2GB reload lag.
+     * Warms up the engine to force AOT (Ahead-of-Time) shader compilation.
      */
-    suspend fun simulateLlmInference(rawNotification: String): String = withContext(Dispatchers.IO) {
+    suspend fun warmUpEngine(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (mlcEngine == null) loadEngine()
+            Log.d("LlmPipeline", "Warming up engine to compile shaders...")
+            
+            val messages = listOf(
+                OpenAIProtocol.ChatCompletionMessage(
+                    role = OpenAIProtocol.ChatCompletionRole.user,
+                    content = "Warmup."
+                )
+            )
+            
+            val channel = mlcEngine?.chat?.completions?.create(
+                messages = messages,
+                response_format = OpenAIProtocol.ResponseFormat(
+                    type = "json_object",
+                    schema = jsonSchema
+                ),
+                max_tokens = 1 
+            )
+            
+            channel?.consumeEach { /* discard */ }
+            Log.d("LlmPipeline", "Engine warmup complete! Shaders cached.")
+            true
+        } catch (e: Exception) {
+            Log.e("LlmPipeline", "Warmup failed", e)
+            false
+        }
+    }
+
+    /**
+     * Handles the full flow of generating, verifying, and retrying if the LLM hallucinated.
+     */
+    suspend fun extractWithRetry(rawNotification: String, maxAttempts: Int = 2): ExtractionResult = withContext(Dispatchers.IO) {
+        var attempt = 1
+        var currentPrompt = "Notification: \"$rawNotification\""
+        
+        while (true) {
+            Log.d("LlmPipeline", "Extraction attempt $attempt for: $rawNotification")
+            
+            // 1. Generate JSON
+            val jsonStr = generateJson(currentPrompt)
+            
+            // 2. Verify against the ORIGINAL text
+            val tx = processAndVerify(rawNotification, jsonStr)
+            
+            // 3. If valid or out of retries, return
+            if (tx.isVerified || attempt >= maxAttempts) {
+                return@withContext ExtractionResult(jsonStr, tx, attempt - 1)
+            }
+            
+            // 4. If invalid, prepare the correction prompt
+            Log.d("LlmPipeline", "Validation failed: ${tx.verificationNotes}. Prompting LLM to correct itself...")
+            currentPrompt = """
+                Original Notification: "$rawNotification"
+                Your previous output: $jsonStr
+                Validation Error: ${tx.verificationNotes}
+                Please carefully correct the JSON. The merchant and amount MUST exist in the original text exactly as written.
+            """.trimIndent()
+            
+            attempt++
+        }
+        
+        // Fallback (should never be reached due to loop break)
+        ExtractionResult("""{"merchant": "Error", "amount": 0.0, "category": "Error"}""", ExtractedTransaction("Error", 0.0, "Error", false, "Unknown error"), 0)
+    }
+
+    /**
+     * The core LLM generation call.
+     */
+    private suspend fun generateJson(userPrompt: String): String {
         val modelDir = File(modelPath)
-        Log.d("LlmPipeline", "Verifying model path: $modelPath. Exists: ${modelDir.exists()}, Is Directory: ${modelDir.isDirectory()}")
         if (!modelDir.exists() || !modelDir.isDirectory) {
-            Log.e("LlmPipeline", "Model not found at $modelPath! Please ensure the folder and its contents are copied correctly.")
-            return@withContext """{"merchant": "Error", "amount": 0.0, "category": "ModelNotFound"}"""
+            return """{"merchant": "Error", "amount": 0.0, "category": "ModelNotFound"}"""
         }
 
         var llmJsonString = """{"merchant": "Error", "amount": 0.0, "category": "EngineFailure"}""" 
         try {
-            if (mlcEngine == null) {
-                loadEngine()
-            }
+            if (mlcEngine == null) loadEngine()
 
             val messages = listOf(
                 OpenAIProtocol.ChatCompletionMessage(
@@ -108,22 +176,28 @@ class LlmPipeline(private val context: Context) {
                 ),
                 OpenAIProtocol.ChatCompletionMessage(
                     role = OpenAIProtocol.ChatCompletionRole.user,
-                    content = "Notification: \"$rawNotification\""
+                    content = userPrompt
                 )
             )
 
-            Log.d("LlmPipeline", "THINKING: Sending request to MLC Engine...")
+            // START TIMER
+            val startTime = System.currentTimeMillis()
+
             val sb = StringBuilder()
             val channel = mlcEngine?.chat?.completions?.create(
                 messages = messages,
-                response_format = OpenAIProtocol.ResponseFormat(type = "json_object")
+                // RESTORED: Strict schema to force early termination!
+                response_format = OpenAIProtocol.ResponseFormat(
+                    type = "json_object",
+                    schema = jsonSchema
+                )
             )
 
-            // Consume the stream and rebuild the full JSON response.
             channel?.consumeEach { response ->
-                val text = response.choices.firstOrNull()?.delta?.content
-                if (text != null) {
-                    sb.append(text)
+                val contentObj = response.choices.firstOrNull()?.delta?.content
+                val textToken = contentObj?.text
+                if (textToken != null) {
+                    sb.append(textToken)
                 }
             }
 
@@ -131,13 +205,17 @@ class LlmPipeline(private val context: Context) {
             if (finalOutput.isNotEmpty()) {
                 llmJsonString = finalOutput
             }
+            
+            // END TIMER
+            val timeTaken = System.currentTimeMillis() - startTime
+            Log.d("LlmPipeline", "SPEED TEST: Generation took ${timeTaken}ms")
             Log.d("LlmPipeline", "MLC Engine raw output: $llmJsonString")
 
         } catch (e: Exception) {
             Log.e("LlmPipeline", "MLC Engine inference failed", e)
             unloadEngine()
         }
-        return@withContext llmJsonString
+        return llmJsonString
     }
 
     fun processAndVerify(rawNotification: String, llmJsonString: String): ExtractedTransaction {
@@ -160,6 +238,12 @@ class LlmPipeline(private val context: Context) {
             if (amount > 0.0 && !rawLower.contains(amountString)) { 
                 isVerified = false
                 notes = "FAILED: Amount '$amountString' not found in original text."
+            }
+            
+            // NEW: Enforce exact enum matching!
+            if (!allowedCategories.contains(category)) {
+                isVerified = false
+                notes = "FAILED: Category '$category' is not a valid option."
             }
 
             ExtractedTransaction(merchant, amount, category, isVerified, notes)
