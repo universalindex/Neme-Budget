@@ -1,7 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.0.0"
+    alias(libs.plugins.ksp)
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.2.10"
 }
 
 android {
@@ -49,6 +50,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.compose.material:material-icons-extended:1.7.6")
+    implementation("androidx.appcompat:appcompat:1.6.1") // For NotificationCompat
 
     // 1. The Official Pre-Compiled MLC LLM Engine (Loaded from your local libs folder)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
@@ -58,6 +60,14 @@ dependencies {
 
     // 3. Kotlinx Serialization (Required internally by the mlc4j .aar for handling OpenAIProtocol)
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+    // --- NEW: ROOM DATABASE & ENCRYPTION (SQLCIPHER) ---
+    val room_version = "2.8.4"
+    implementation("androidx.room:room-runtime:$room_version")
+    implementation("androidx.room:room-ktx:$room_version")
+    ksp("androidx.room:room-compiler:$room_version")
+    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    implementation("androidx.sqlite:sqlite-ktx:2.4.0") // Required for Room with SQLCipher
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

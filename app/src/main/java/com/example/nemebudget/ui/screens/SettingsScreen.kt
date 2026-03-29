@@ -1,7 +1,15 @@
 package com.example.nemebudget.ui.screens
 
+import android.Manifest
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +56,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.ProcessingState
@@ -64,6 +73,13 @@ private data class DeviceAppItem(
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLab: () -> Unit) {
     val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(context, "Notification permission is required for test alerts.", Toast.LENGTH_SHORT).show()
+        }
+    }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val modelStatus by viewModel.modelStatus.collectAsStateWithLifecycle()
     val isOptimizing by viewModel.isOptimizing.collectAsStateWithLifecycle()
@@ -73,7 +89,10 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
     var ruleInput by remember { mutableStateOf("") }
     var showWipeDialog by remember { mutableStateOf(false) }
     var showIgnoreAppsSubmenu by remember { mutableStateOf(false) }
+    var testNotificationText by remember { mutableStateOf("You spent $45.99 at Starbucks") }
     val timeFormatter = remember { SimpleDateFormat("h:mm a", Locale.US) }
+    val listenerEnabled = isNotificationListenerEnabled(context)
+    val postNotificationsGranted = isPostNotificationsGranted(context)
 
     if (showIgnoreAppsSubmenu) {
         IgnoreAppsScreen(
@@ -97,6 +116,43 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
     ) {
         item {
             Text("Settings", style = MaterialTheme.typography.headlineSmall)
+        }
+
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Required Permissions", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Status: Listener ${if (listenerEnabled) "Granted" else "Missing"} | Notifications ${if (postNotificationsGranted) "Granted" else "Missing"}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "For automatic bank scanning after install, grant both permissions once.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+
+                    if (!listenerEnabled) {
+                        Button(
+                            onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Grant Notification Listener")
+                        }
+                    }
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !postNotificationsGranted) {
+                        Button(
+                            onClick = { notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Grant Post Notifications")
+                        }
+                    }
+                }
+            }
         }
 
         item {
@@ -220,8 +276,40 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
         item { HorizontalDivider() }
 
         item {
-            Text("Data Management", style = MaterialTheme.typography.titleMedium)
+            Text("🧪 Test Notification Generator", style = MaterialTheme.typography.titleMedium)
         }
+
+        item {
+            Text(
+                "Post a test bank notification to debug the encryption pipeline. It will be intercepted and saved to the encrypted database.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        item {
+            OutlinedTextField(
+                value = testNotificationText,
+                onValueChange = { testNotificationText = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Notification text") },
+                placeholder = { Text("You spent $45.99 at Starbucks") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
+            )
+        }
+
+        item {
+            Button(
+                onClick = {
+                    postTestNotification(context, testNotificationText)
+                },
+                enabled = testNotificationText.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Post Test Notification")
+            }
+        }
+
+        item { HorizontalDivider() }
 
         item {
             Text("Transactions stored locally: $totalCount")
@@ -442,3 +530,55 @@ private fun loadInstalledLaunchableApps(packageManager: PackageManager): List<De
         }
         .distinctBy { it.packageName }
 }
+
+/**
+ * Posts a test notification that mimics a bank transaction notification.
+ * This is used for debugging the BankNotificationListenerService encryption pipeline.
+ */
+private fun postTestNotification(context: android.content.Context, notificationText: String) {
+    if (!isPostNotificationsGranted(context)) {
+        Toast.makeText(context, "Grant Post Notifications first.", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+    
+    // Create a notification channel for Android 8+
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        val channel = android.app.NotificationChannel(
+            "test_bank_channel",
+            "Test Bank Notifications",
+            android.app.NotificationManager.IMPORTANCE_HIGH
+        )
+        notificationManager.createNotificationChannel(channel)
+    }
+
+    val notification = androidx.core.app.NotificationCompat.Builder(context, "test_bank_channel")
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setContentTitle("Transaction Alert")
+        .setContentText(notificationText)
+        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+        .setAutoCancel(true)
+        .build()
+
+    // Post with a unique ID based on timestamp
+    notificationManager.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
+}
+
+private fun isPostNotificationsGranted(context: Context): Boolean {
+    return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+}
+
+private fun isNotificationListenerEnabled(context: Context): Boolean {
+    val enabledListeners = Settings.Secure.getString(
+        context.contentResolver,
+        "enabled_notification_listeners"
+    ) ?: return false
+
+    return enabledListeners.split(':').any { flattened ->
+        val component = ComponentName.unflattenFromString(flattened)
+        component?.packageName == context.packageName
+    }
+}
+

@@ -1,11 +1,22 @@
 package com.example.nemebudget
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +30,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,9 +39,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -78,8 +93,18 @@ private fun MainApp() {
     // Hoist LlmPipeline so it stays in RAM across tab navigation
     val context = LocalContext.current
     val pipeline = remember { LlmPipeline(context) }
+    var showListenerPermissionDialog by remember { mutableStateOf(false) }
+    val postNotificationsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* no-op: status is checked on recomposition */ }
 
     LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !isPostNotificationsGranted(context)) {
+            postNotificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (!isNotificationListenerEnabled(context)) {
+            showListenerPermissionDialog = true
+        }
         settingsViewModel.processOnAppOpenIfNeeded()
     }
 
@@ -143,6 +168,29 @@ private fun MainApp() {
             }
         }
     }
+
+    if (showListenerPermissionDialog && !isNotificationListenerEnabled(context)) {
+        AlertDialog(
+            onDismissRequest = { showListenerPermissionDialog = false },
+            title = { Text("Enable Notification Access") },
+            text = {
+                Text("Grant Notification Listener once so bank alerts can be scanned automatically after install.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showListenerPermissionDialog = false
+                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                }) {
+                    Text("Open Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showListenerPermissionDialog = false }) {
+                    Text("Not Now")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -155,6 +203,7 @@ fun LlmTestingScreen(pipeline: LlmPipeline, modifier: Modifier = Modifier) {
     var retriesUsed by remember { mutableStateOf(0) }
 
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         detectedDevice = pipeline.getBestLlmDevice()
@@ -167,12 +216,28 @@ fun LlmTestingScreen(pipeline: LlmPipeline, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(text = "The Brain Testing Lab", style = MaterialTheme.typography.headlineMedium)
+        
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                context.startActivity(intent)
+            }) {
+                Text("Grant Listener Permission")
+            }
+            
+            Button(onClick = {
+                sendTestNotification(context, rawNotificationInput)
+            }) {
+                Text("Post as System Notification")
+            }
+        }
+
         Text(text = "Detected LLM Device: $detectedDevice", style = MaterialTheme.typography.bodySmall)
 
         OutlinedTextField(
             value = rawNotificationInput,
             onValueChange = { rawNotificationInput = it },
-            label = { Text("Paste Fake Bank Notification Here") },
+            label = { Text("Notification Text to Test") },
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -180,7 +245,6 @@ fun LlmTestingScreen(pipeline: LlmPipeline, modifier: Modifier = Modifier) {
             onClick = {
                 coroutineScope.launch {
                     isProcessing = true
-                    // Call the new extractWithRetry function!
                     val result = pipeline.extractWithRetry(rawNotificationInput, maxAttempts = 2)
                     rawLlmJsonOutput = result.rawJson
                     outputTransaction = result.transaction
@@ -191,7 +255,7 @@ fun LlmTestingScreen(pipeline: LlmPipeline, modifier: Modifier = Modifier) {
             modifier = Modifier.fillMaxWidth(),
             enabled = !isProcessing
         ) {
-            Text(if (isProcessing) "LLM Thinking..." else "Process with Grammar & Verifier")
+            Text(if (isProcessing) "LLM Thinking..." else "Process Manual Text")
         }
 
         HorizontalDivider()
@@ -217,3 +281,42 @@ fun LlmTestingScreen(pipeline: LlmPipeline, modifier: Modifier = Modifier) {
         }
     }
 }
+
+/**
+ * Helper to post a real Android notification so we can test the BankNotificationListenerService.
+ */
+private fun sendTestNotification(context: Context, text: String) {
+    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    val channelId = "test_channel"
+    
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(channelId, "Test Notifications", NotificationManager.IMPORTANCE_DEFAULT)
+        notificationManager.createNotificationChannel(channel)
+    }
+
+    val builder = NotificationCompat.Builder(context, channelId)
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setContentTitle("Neme Test Alert")
+        .setContentText(text)
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+
+    notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
+}
+
+private fun isPostNotificationsGranted(context: Context): Boolean {
+    return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+}
+
+private fun isNotificationListenerEnabled(context: Context): Boolean {
+    val enabledListeners = Settings.Secure.getString(
+        context.contentResolver,
+        "enabled_notification_listeners"
+    ) ?: return false
+
+    return enabledListeners.split(':').any { flattened ->
+        val component = ComponentName.unflattenFromString(flattened)
+        component?.packageName == context.packageName
+    }
+}
+
