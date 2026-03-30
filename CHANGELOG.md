@@ -2,6 +2,163 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-03-29 - AI Assistant (Comprehensive Consolidation Update)
+
+### Current Source-of-Truth Snapshot (as of this entry)
+* **Build/plugins** (`app/build.gradle.kts`): module uses catalog-managed plugin aliases for Android app, Compose compiler plugin, Kotlin serialization plugin, and KSP.
+* **Dependency strategy**: hardcoded app-module coordinates were migrated to `gradle/libs.versions.toml` aliases for navigation-compose, lifecycle-compose, material icons, Room, SQLCipher, SQLite KTX, and Kotlinx serialization.
+* **DB encryption runtime**: project is on `net.zetetic:sqlcipher-android` (not deprecated `android-database-sqlcipher`). `AppDatabase` now uses `SupportOpenHelperFactory` and an explicit one-time `System.loadLibrary("sqlcipher")` guard before first Room open.
+* **Notification ingest pipeline**: listener saves raw notifications into encrypted `raw_notifications`; batch processor drains queue and runs extraction.
+* **LLM gating behavior**: the LLM context pre-gate was removed after causing false negatives. Current behavior is regex/action prefilter -> `extractWithRetry(...)`.
+
+### Superseded/Corrected History Notes
+* Prior entries that mention active use of `net.zetetic:android-database-sqlcipher`, `SupportFactory`, or `net.sqlcipher.*` are historical and superseded by the SQLCipher migration entry dated 2026-03-29.
+* Prior entries that describe active LLM context pre-classification (`classifyTransactionalContext`) are historical and superseded by the pre-gate removal entry dated 2026-03-29.
+* Prior entries that mention top-level `alias(libs.plugins.kotlin.serialization) apply false` are superseded; serialization plugin alias is module-scoped in `app/build.gradle.kts`.
+
+### Validation and Stability Notes
+* Gradle/Kotlin validation has been repeatedly checked with `:app:compileDebugKotlin` after each migration cluster (catalog expansion, dependency swaps, SQLCipher API updates, and plugin alias cleanup).
+* SQLCipher native crash class (`UnsatisfiedLinkError` from `SQLiteConnection.nativeOpen`) was addressed by enforcing native load order in `AppDatabase` before Room open.
+* This consolidation entry is intended to be the quickest onboarding reference for Dev1/Dev2 when reconciling older roadmap notes with current implementation.
+
+### Known Follow-Ups (Tracked, Not Completed Here)
+* Verify 16 KB page-size compliance for Play submission using release artifacts and Play-compatible checks.
+* Replace temporary/simple notification tray icon with final branded monochrome notification icon.
+* Continue performance work (frame drops during shader warmup and batch processing) and UX upgrades (determinate processing progress UI) per DEV2 backlog.
+
+---
+
+## 2026-03-29 - AI Assistant (Dependency Modernization: SQLCipher + Leaner Icons)
+
+### Dependency Swaps
+* Replaced deprecated SQLCipher artifact:
+  * from `net.zetetic:android-database-sqlcipher`
+  * to `net.zetetic:sqlcipher-android` (version-catalog alias `libs.sqlcipher.android`)
+* Removed `androidx.appcompat:appcompat` from `app/build.gradle.kts` (project already uses `ComponentActivity` + Compose).
+* Removed `gson` from active `app/build.gradle.kts` dependencies (kotlinx serialization remains the JSON stack).
+* Replaced `material-icons-extended` with `material-icons-core` to reduce binary footprint and avoid pinned/discontinued extended icon set.
+* Normalized the material icons catalog alias to `androidx-compose-material-icons` (accessor `libs.androidx.compose.material.icons`) to avoid Kotlin DSL accessor resolution issues in IDE.
+
+### Required Code Migration After SQLCipher Swap
+* Updated SQLCipher imports in `app/src/main/java/com/example/nemebudget/db/AppDatabase.kt`:
+  * `net.sqlcipher.database.SQLiteDatabase` -> `net.zetetic.database.sqlcipher.SQLiteDatabase`
+  * `SupportFactory` -> `SupportOpenHelperFactory`
+* Updated helper factory call:
+  * `.openHelperFactory(SupportFactory(passphrase))`
+  * -> `.openHelperFactory(SupportOpenHelperFactory(passphrase))`
+* Added explicit SQLCipher native load guard in `AppDatabase`:
+  * `System.loadLibrary("sqlcipher")` runs once before opening Room.
+  * Throws a clear `IllegalStateException` with packaging guidance if JNI load fails.
+* Rationale: fix runtime crash `UnsatisfiedLinkError: SQLiteConnection.nativeOpen ... no implementation found` by guaranteeing native library load order before first DB access.
+
+### Icon Compatibility Adjustments
+* Updated `app/src/main/java/com/example/nemebudget/ui/navigation/AppDestination.kt` to use Material Icons Core-safe symbols (`Home`, `List`, `AccountCircle`).
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/SettingsScreen.kt` to use `ArrowForward` instead of `ChevronRight`.
+
+### Rationale
+* Align dependencies with current ecosystem support and Play-era requirements.
+* Reduce build/APK overhead from legacy or oversized libraries.
+* Removed redundant top-level `alias(libs.plugins.kotlin.serialization) apply false` from `build.gradle.kts` to avoid IDE Kotlin DSL accessor resolution errors; module-level plugin alias in `app/build.gradle.kts` remains the active source of truth.
+
+---
+
+## 2026-03-29 - AI Assistant (Catalog Expansion + LLM Pre-Processing Removal)
+
+### Build Hygiene: Version Catalog Coverage Expanded
+* Moved additional hardcoded dependency coordinates from `app/build.gradle.kts` into `gradle/libs.versions.toml`.
+* Added explicit version keys and aliases for:
+  * Navigation Compose (`androidx.navigation:navigation-compose`)
+  * Lifecycle Compose artifacts (`lifecycle-viewmodel-compose`, `lifecycle-runtime-compose`)
+  * Compose Material Icons Extended
+  * AppCompat
+  * Gson
+  * Kotlinx Serialization JSON
+  * Room Runtime/KTX/Compiler
+  * SQLCipher (`net.zetetic:android-database-sqlcipher`)
+  * SQLite KTX
+* Replaced inline dependency strings in `app/build.gradle.kts` with `libs.*` references and removed module-local `room_version` constant.
+* Rationale: keep dependency/plugin versions centralized to reduce drift and simplify future upgrades/reviews.
+
+### Pipeline Behavior: Removed LLM Context Pre-Processing Gate
+* Removed the LLM context gate call from `app/src/main/java/com/example/nemebudget/pipeline/NotificationBatchProcessor.kt`.
+  * Batch flow now goes directly from regex/action prefilter -> `extractWithRetry(...)`.
+* Removed context-gate-only code from `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt`:
+  * Deleted `NotificationContextDecision` data model.
+  * Deleted context gate prompt/schema fields.
+  * Deleted `classifyTransactionalContext(...)` method.
+* Rationale: user reported this pre-processing stage was blocking valid notifications from entering final transaction extraction.
+
+---
+
+## 2026-03-29 - AI Assistant (Scoped Update: Kotlin Plugin Unification Only)
+
+### Build Hygiene
+* Unified Kotlin serialization plugin configuration to the version catalog:
+  * Added `kotlin-serialization` plugin alias in `gradle/libs.versions.toml`.
+  * Updated `app/build.gradle.kts` to use `alias(libs.plugins.kotlin.serialization)`.
+  * Added `alias(libs.plugins.kotlin.serialization) apply false` in top-level `build.gradle.kts`.
+* Rationale: remove hardcoded plugin version in module script and keep Kotlin plugin versioning centralized.
+
+### Planning (Deferred)
+* Added a top-level deferred work queue in `DEV2_BACKEND_AI_PLAN.md` for the remaining requested items (notification icon, 16 KB SQLCipher check, frame-drop reduction, determinate progress UI, batch tuning/history verification).
+* Rationale: user requested this pass to implement only the first item and save the rest for later.
+
+---
+
+## 2026-03-29 - AI Assistant (Gradle Sync Fix: Missing KSP Alias)
+
+### Build Configuration Repair
+* Added missing KSP version and plugin alias to `gradle/libs.versions.toml`:
+  * `ksp = "2.2.10-2.0.2"` under `[versions]`
+  * `ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }` under `[plugins]`
+* Added `android.disallowKotlinSourceSets=false` to `gradle.properties` so KSP generated source sets are accepted with built-in Kotlin mode.
+* Rationale: `app/build.gradle.kts` uses `alias(libs.plugins.ksp)`, and without the catalog entry Gradle script compilation fails during sync (`Unresolved reference 'ksp'`).
+
+---
+
+## 2026-03-29 - AI Assistant (LLM Context Gate in Batch Processor)
+
+### Processing Accuracy: Conversational Money Mentions Filter
+* Added `NotificationContextDecision` and `classifyTransactionalContext(...)` to `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt`.
+  * Uses a strict JSON schema (`is_transactional`, `reason`) to classify whether text is an actual account event.
+  * Designed to reject conversational examples like payment requests or hypothetical price mentions that still contain money patterns.
+* Updated `app/src/main/java/com/example/nemebudget/pipeline/NotificationBatchProcessor.kt` to run the LLM context gate after the regex/action prefilter and before extraction.
+  * Non-transactional context is skipped, logged with reason, and removed from pending queue.
+  * If classification inference fails, pipeline falls back to allow-processing (to avoid silent data loss during transient model issues).
+* Rationale: improve precision beyond regex so only real transaction-like notifications reach extraction.
+
+---
+
+## 2026-03-29 - AI Assistant (Batch Processing Kickoff)
+
+### Batch Pipeline (First Increment)
+* Added `app/src/main/java/com/example/nemebudget/pipeline/NotificationBatchProcessor.kt`.
+  * Reads encrypted pending rows from `raw_notifications` via Room.
+  * Applies a final transactional gate (money signal + action words) before running LLM extraction.
+  * Runs `LlmPipeline.extractWithRetry(...)` and converts verified outputs into domain `Transaction` objects.
+  * Deletes processed/skipped rows from the raw queue to keep backlog clean.
+* Wired `FakeRepository` to optionally use `NotificationBatchProcessor` for real queue processing while preserving existing fake fallback behavior.
+  * `processPendingNotifications(...)` now consumes real encrypted pending notifications when processor is attached.
+  * `getPendingNotificationCount()` now reflects DB queue count through Flow collection.
+  * `wipeAllData()` now clears pending raw notifications when processor is attached.
+* Updated `MainActivity.kt` to instantiate `NotificationBatchProcessor(context, pipeline)` and inject it into `FakeRepository`.
+* Rationale: start batch processing without a full repository migration yet, so app-open/manual processing paths become functional against the encrypted ingestion queue.
+
+---
+
+## 2026-03-29 - AI Assistant (MainActivity Compile Hotfix)
+
+### Build Repair: Notification Permission + Tester Wiring
+* Fixed broken function scope in `app/src/main/java/com/example/nemebudget/MainActivity.kt` where the listener-permission `AlertDialog` block had been moved outside `MainApp()`.
+* Restored missing helper functions in `MainActivity.kt` used by startup permission checks:
+  * `isPostNotificationsGranted(context)`
+  * `isNotificationListenerEnabled(context)`
+* Added missing `NotificationChannel` import so the in-app test-notification channel setup compiles on Android 8+.
+* Closed the trailing brace for `sendTestNotification(...)`, which was causing parser cascade errors (`Expecting top level declaration`, missing `}` at EOF).
+* Rationale: keep behavior unchanged while unblocking Gradle/Kotlin compilation errors introduced by partial edits.
+
+---
+
 ## 2026-03-28 - AI Assistant (Permission Onboarding + Room Runtime Fix)
 
 ### Runtime Stability: Room `AppDatabase_Impl` Generation

@@ -1,9 +1,9 @@
 package com.example.nemebudget.ui.navigation
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AccountBalanceWallet
-import androidx.compose.material.icons.outlined.Dashboard
-import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -12,9 +12,9 @@ sealed class AppDestination(
     val label: String,
     val icon: ImageVector
 ) {
-    data object Dashboard : AppDestination("dashboard", "Dashboard", Icons.Outlined.Dashboard)
-    data object Transactions : AppDestination("transactions", "Transactions", Icons.AutoMirrored.Outlined.List)
-    data object Budgets : AppDestination("budgets", "Budgets", Icons.Outlined.AccountBalanceWallet)
+    data object Dashboard : AppDestination("dashboard", "Dashboard", Icons.Filled.Home)
+    data object Transactions : AppDestination("transactions", "Transactions", Icons.AutoMirrored.Filled.List)
+    data object Budgets : AppDestination("budgets", "Budgets", Icons.Filled.AccountCircle)
     data object Settings : AppDestination("settings", "Settings", Icons.Outlined.Settings)
     data object Lab : AppDestination("lab", "LLM Lab", Icons.Outlined.Settings)
 }

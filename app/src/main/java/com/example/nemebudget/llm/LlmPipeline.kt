@@ -156,6 +156,7 @@ class LlmPipeline(private val context: Context) {
         ExtractionResult("""{"merchant": "Error", "amount": 0.0, "category": "Error"}""", ExtractedTransaction("Error", 0.0, "Error", false, "Unknown error"), 0)
     }
 
+
     /**
      * The core LLM generation call.
      */
@@ -235,7 +236,7 @@ class LlmPipeline(private val context: Context) {
             }
 
             val amountString = amount.toString()
-            if (amount > 0.0 && !rawLower.contains(amountString)) { 
+            if (amount > 0.0 && !rawLower.contains(amountString)) {
                 isVerified = false
                 notes = "FAILED: Amount '$amountString' not found in original text."
             }

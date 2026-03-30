@@ -1,8 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.2.10"
 }
 
 android {
@@ -46,28 +46,23 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
-    implementation("androidx.navigation:navigation-compose:2.8.5")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
-    implementation("androidx.compose.material:material-icons-extended:1.7.6")
-    implementation("androidx.appcompat:appcompat:1.6.1") // For NotificationCompat
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.compose.material.icons)
 
     // 1. The Official Pre-Compiled MLC LLM Engine (Loaded from your local libs folder)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
 
-    // 2. Gson for parsing the JSON that MLC outputs
-    implementation("com.google.code.gson:gson:2.10.1")
-
-    // 3. Kotlinx Serialization (Required internally by the mlc4j .aar for handling OpenAIProtocol)
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    // Kotlinx Serialization (Required internally by the mlc4j .aar for handling OpenAIProtocol)
+    implementation(libs.kotlinx.serialization.json)
 
     // --- NEW: ROOM DATABASE & ENCRYPTION (SQLCIPHER) ---
-    val room_version = "2.8.4"
-    implementation("androidx.room:room-runtime:$room_version")
-    implementation("androidx.room:room-ktx:$room_version")
-    ksp("androidx.room:room-compiler:$room_version")
-    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
-    implementation("androidx.sqlite:sqlite-ktx:2.4.0") // Required for Room with SQLCipher
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+    implementation(libs.sqlcipher.android)
+    implementation(libs.androidx.sqlite.ktx) // Required for Room with SQLCipher
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

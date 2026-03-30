@@ -5,17 +5,24 @@ import com.example.nemebudget.model.Budget
 import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.ModelStatus
 import com.example.nemebudget.model.Transaction
+import com.example.nemebudget.pipeline.NotificationBatchProcessor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.min
 import kotlin.random.Random
 
-class FakeRepository : AppRepository {
+class FakeRepository(
+    private val batchProcessor: NotificationBatchProcessor? = null
+) : AppRepository {
 
     private val transactionsFlow = MutableStateFlow(generateTransactions())
     private val budgetsFlow = MutableStateFlow(generateBudgets(transactionsFlow.value))
@@ -35,6 +42,17 @@ class FakeRepository : AppRepository {
         )
     )
     private val pendingNotificationCountFlow = MutableStateFlow(3)
+    private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        batchProcessor?.let { processor ->
+            repoScope.launch {
+                processor.pendingCount.collect { count ->
+                    pendingNotificationCountFlow.value = count
+                }
+            }
+        }
+    }
 
     override fun getAllTransactions(): Flow<List<Transaction>> = transactionsFlow
 
@@ -75,6 +93,19 @@ class FakeRepository : AppRepository {
     override fun getPendingNotificationCount(): Flow<Int> = pendingNotificationCountFlow
 
     override suspend fun processPendingNotifications(limit: Int): Int {
+        if (batchProcessor != null) {
+            val result = batchProcessor.processPending(limit)
+            if (result.createdTransactions.isNotEmpty()) {
+                val currentMaxId = transactionsFlow.value.maxOfOrNull { it.id } ?: 0
+                val withIds = result.createdTransactions.mapIndexed { index, tx ->
+                    tx.copy(id = currentMaxId + index + 1)
+                }
+                transactionsFlow.value = (withIds + transactionsFlow.value).sortedByDescending { it.date }
+                budgetsFlow.value = generateBudgets(transactionsFlow.value)
+            }
+            return result.processedRawCount
+        }
+
         val pending = pendingNotificationCountFlow.value
         if (pending <= 0) return 0
 
@@ -104,6 +135,7 @@ class FakeRepository : AppRepository {
         budgetsFlow.value = emptyList()
         settingsFlow.value = AppSettings()
         pendingNotificationCountFlow.value = 0
+        batchProcessor?.clearPendingQueue()
     }
 
     override suspend fun exportToCsv(): String {

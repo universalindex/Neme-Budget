@@ -40,9 +40,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -185,7 +185,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    Icon(Icons.Default.ChevronRight, contentDescription = "Open ignore apps")
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Open ignore apps")
                 }
             }
         }

@@ -1,11 +1,11 @@
 package com.example.nemebudget.db
 
 import android.content.Context
+import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import net.sqlcipher.database.SQLiteDatabase
-import net.sqlcipher.database.SupportFactory
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 /**
  * 4. RoomDatabase (The Vault Manager)
@@ -22,8 +22,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun rawNotificationDao(): RawNotificationDao
 
     companion object {
+        private const val TAG = "AppDatabase"
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
+        @Volatile
+        private var nativeLoaded: Boolean = false
 
         /**
          * The singleton pattern ensures we only ever open the encrypted file once in memory.
@@ -32,8 +36,7 @@ abstract class AppDatabase : RoomDatabase() {
          */
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                // IMPORTANT: SQLCipher requires loading its native libraries before use!
-                SQLiteDatabase.loadLibs(context)
+                ensureSqlCipherNativeLoaded()
 
                 // Get the raw 32-byte secure passphrase
                 val passphrase = EncryptionManager.getDbPassphrase(context)
@@ -47,10 +50,27 @@ abstract class AppDatabase : RoomDatabase() {
                     // We pass the hardware-encrypted key from the AndroidKeyStore wrapper.
                     // If anyone tries to open the "nemebudget_secure.db" file without this key,
                     // it just looks like randomized static binary data!
-                    .openHelperFactory(SupportFactory(passphrase))
+                    .openHelperFactory(SupportOpenHelperFactory(passphrase))
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        private fun ensureSqlCipherNativeLoaded() {
+            if (nativeLoaded) return
+            try {
+                // sqlcipher-android ships libsqlcipher.so; it must be loaded before JNI calls.
+                System.loadLibrary("sqlcipher")
+                nativeLoaded = true
+                Log.d(TAG, "SQLCipher native library loaded.")
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed to load SQLCipher native library.", t)
+                throw IllegalStateException(
+                    "SQLCipher native library failed to load. " +
+                        "Check ABI packaging and dependency setup for net.zetetic:sqlcipher-android.",
+                    t
+                )
             }
         }
     }

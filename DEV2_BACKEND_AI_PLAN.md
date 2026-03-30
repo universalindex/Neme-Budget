@@ -1,6 +1,13 @@
 # ⚙️ NOAH — Backend, AI & Data Pipeline Lead
 ### Zero-Cloud AI Budgeter | Weber State Hackathon | Due: April 3, 2026 @ 11:59 PM
 
+> **Deferred Work Queue (Do Later):**
+> 1) Replace test notification tray icon (`setSmallIcon`) with a branded monochrome notification icon.
+> 2) Investigate 16 KB page-size compatibility warning for `libsqlcipher.so` before Play submission.
+> 3) Reduce frame drops during shader warmup and batch notification processing.
+> 4) Replace indeterminate processing spinner with per-notification determinate progress bar.
+> 5) Tune batch throughput (start with size 10) and verify transaction history/count updates correctly.
+
 ---
 
 ## Your Role
