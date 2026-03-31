@@ -1,5 +1,10 @@
 package com.example.nemebudget.model
 
+enum class TransactionType(val label: String) {
+    EXPENSE("Expense"),
+    INCOME("Income")
+}
+
 data class Transaction(
     val id: Int = 0,
     val merchant: String,
@@ -8,7 +13,8 @@ data class Transaction(
     val date: Long,
     val isAiParsed: Boolean,
     val confidence: Float,
-    val rawNotificationText: String = ""
+    val rawNotificationText: String = "",
+    val type: TransactionType = TransactionType.EXPENSE  // Default to expense for backward compatibility
 )
 
 enum class Category(val label: String, val emoji: String) {

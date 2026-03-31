@@ -121,13 +121,13 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     }
 
     fun processNow() {
-        processPendingInternal(limit = 200, startup = false)
+        processPendingInternal(limit = 80, startup = false)
     }
 
     fun processOnAppOpenIfNeeded() {
         if (hasAttemptedStartupProcessing) return
         hasAttemptedStartupProcessing = true
-        processPendingInternal(limit = 100, startup = true)
+        processPendingInternal(limit = 20, startup = true)
     }
 
     fun exportCsv(onReady: (String) -> Unit) {
@@ -144,6 +144,11 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
 
     private fun processPendingInternal(limit: Int, startup: Boolean) {
         viewModelScope.launch {
+            if (startup) {
+                // Let first frame/layout settle before heavy model/database work starts.
+                delay(1200)
+            }
+
             val pending = pendingNotificationCount.value
             if (pending <= 0) {
                 if (!startup) {

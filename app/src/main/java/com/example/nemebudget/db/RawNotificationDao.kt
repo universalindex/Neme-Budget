@@ -50,4 +50,34 @@ interface RawNotificationDao {
      */
     @Query("DELETE FROM raw_notifications")
     suspend fun deleteAll()
+    
+    // ===== ADDITIONAL METHODS FOR BATCH PROCESSING =====
+    
+    /**
+     * Get unprocessed notifications. Returns a list (not a Flow) for batch processing.
+     * RealRepository uses this to grab a batch of raw notifications to send to the LLM.
+     */
+    @Query("SELECT * FROM raw_notifications WHERE processed = 0 ORDER BY postTimeMillis ASC LIMIT :limit")
+    suspend fun getUnprocessedRawNotifications(limit: Int): List<RawNotification>
+    
+    /**
+     * Mark a notification as successfully processed.
+     * This prevents the batch processor from re-processing the same notification.
+     */
+    @Query("UPDATE raw_notifications SET processed = 1 WHERE id = :id")
+    suspend fun markAsProcessed(id: Int)
+    
+    /**
+     * Mark a notification as failed (with an error message).
+     * Useful for debugging - we can see what went wrong processing each notification.
+     */
+    @Query("UPDATE raw_notifications SET processed = 1, errorMessage = :errorMessage WHERE id = :id")
+    suspend fun markAsFailed(id: Int, errorMessage: String)
+    
+    /**
+     * Count unprocessed notifications.
+     * Returns a Flow so the UI can show a real-time counter.
+     */
+    @Query("SELECT COUNT(*) FROM raw_notifications WHERE processed = 0")
+    fun getUnprocessedCount(): Flow<Int>
 }

@@ -53,7 +53,9 @@ import com.example.nemebudget.ui.theme.NemeBudgetTheme
 import com.example.nemebudget.llm.ExtractedTransaction
 import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.pipeline.NotificationBatchProcessor
+import com.example.nemebudget.db.AppDatabase
 import com.example.nemebudget.repository.FakeRepository
+import com.example.nemebudget.repository.RealRepository
 import com.example.nemebudget.ui.dashboard.DashboardScreen
 import com.example.nemebudget.ui.navigation.AppDestination
 import com.example.nemebudget.ui.navigation.bottomDestinations
@@ -88,7 +90,10 @@ private fun MainApp() {
     val context = LocalContext.current
     // Hoist LlmPipeline so it stays in RAM across tab navigation
     val pipeline = remember { LlmPipeline(context) }
-    val repo = remember { FakeRepository(NotificationBatchProcessor(context, pipeline)) }
+    // Open the encrypted database (SQLCipher)
+    val database = remember { AppDatabase.getDatabase(context) }
+    // Use RealRepository that reads/writes to the encrypted database
+    val repo = remember { RealRepository(context, database, pipeline) }
     val dashboardViewModel = remember { DashboardViewModel(repo) }
     val transactionsViewModel = remember { TransactionsViewModel(repo) }
     val budgetsViewModel = remember { BudgetsViewModel(repo) }

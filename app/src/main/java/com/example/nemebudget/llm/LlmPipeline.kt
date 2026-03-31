@@ -36,28 +36,30 @@ class LlmPipeline(private val context: Context) {
 
     private val modelLib = "qwen3_q4f16_1"
 
-    // Extract exactly the labels the enum uses
-    private val allowedCategories = Category.entries.map { it.label }
-    
     // Inject the allowed categories directly into the JSON Schema as an enum constraint
+    private val allowedCategories = Category.entries.map { it.label }
+    private val allowedCategoryText = allowedCategories.joinToString(", ")
+
+    // Inject the allowed categories and transaction types into the JSON Schema as enum constraints
     private val jsonSchema = """
         {
           "type": "object",
           "properties": {
             "merchant": {"type": "string"},
             "amount": {"type": "number"},
-            "category": {
-              "type": "string",
-              "enum": [${allowedCategories.joinToString(", ") { "\"$it\"" }}]
-            }
-          },
+             "category": {
+               "type": "string",
+               "enum": [${allowedCategories.joinToString(", ") { "\"$it\"" }}]
+             }
+           },
           "required": ["merchant", "amount", "category"]
         }
     """.trimIndent()
 
     private val systemPrompt = """
-        You are a strict data extractor. Read the bank notification and extract the merchant name, amount, and a short category.
-    """.trimIndent()
+Extract: Merchant, Amount, Category.
+Output only valid JSONS
+ """.trimIndent()
 
     private var mlcEngine: MLCEngine? = null
 
@@ -123,37 +125,36 @@ class LlmPipeline(private val context: Context) {
      * Handles the full flow of generating, verifying, and retrying if the LLM hallucinated.
      */
     suspend fun extractWithRetry(rawNotification: String, maxAttempts: Int = 2): ExtractionResult = withContext(Dispatchers.IO) {
-        var attempt = 1
         var currentPrompt = "Notification: \"$rawNotification\""
-        
-        while (true) {
+        var lastJson = """{"merchant":"Error","amount":0.0,"category":"Other"}"""
+        var lastTx = ExtractedTransaction("Error", 0.0, "Other", false, "Unknown error")
+
+        for (attempt in 1..maxAttempts) {
             Log.d("LlmPipeline", "Extraction attempt $attempt for: $rawNotification")
-            
-            // 1. Generate JSON
             val jsonStr = generateJson(currentPrompt)
-            
-            // 2. Verify against the ORIGINAL text
             val tx = processAndVerify(rawNotification, jsonStr)
-            
-            // 3. If valid or out of retries, return
-            if (tx.isVerified || attempt >= maxAttempts) {
+
+            lastJson = jsonStr
+            lastTx = tx
+
+            if (tx.isVerified) {
                 return@withContext ExtractionResult(jsonStr, tx, attempt - 1)
             }
-            
-            // 4. If invalid, prepare the correction prompt
-            Log.d("LlmPipeline", "Validation failed: ${tx.verificationNotes}. Prompting LLM to correct itself...")
-            currentPrompt = """
-                Original Notification: "$rawNotification"
-                Your previous output: $jsonStr
-                Validation Error: ${tx.verificationNotes}
-                Please carefully correct the JSON. The merchant and amount MUST exist in the original text exactly as written.
-            """.trimIndent()
-            
-            attempt++
+
+            if (attempt < maxAttempts) {
+                Log.d("LlmPipeline", "Validation failed: ${tx.verificationNotes}. Prompting LLM to correct itself...")
+                currentPrompt = """
+                    Original Notification: "$rawNotification"
+                    Your previous output: $jsonStr
+                    Validation Error: ${tx.verificationNotes}
+                    Valid categories (exact spelling): $allowedCategoryText
+                    Return JSON only with keys: merchant, amount, category.
+                    Do not abbreviate category names.
+                """.trimIndent()
+            }
         }
-        
-        // Fallback (should never be reached due to loop break)
-        ExtractionResult("""{"merchant": "Error", "amount": 0.0, "category": "Error"}""", ExtractedTransaction("Error", 0.0, "Error", false, "Unknown error"), 0)
+
+        ExtractionResult(lastJson, lastTx, (maxAttempts - 1).coerceAtLeast(0))
     }
 
 
@@ -163,10 +164,10 @@ class LlmPipeline(private val context: Context) {
     private suspend fun generateJson(userPrompt: String): String {
         val modelDir = File(modelPath)
         if (!modelDir.exists() || !modelDir.isDirectory) {
-            return """{"merchant": "Error", "amount": 0.0, "category": "ModelNotFound"}"""
+            return """{"merchant": "Error", "amount": 0.0, "category": "Other"}"""
         }
 
-        var llmJsonString = """{"merchant": "Error", "amount": 0.0, "category": "EngineFailure"}""" 
+        var llmJsonString = """{"merchant": "Error", "amount": 0.0, "category": "Other"}"""
         try {
             if (mlcEngine == null) loadEngine()
 
@@ -181,17 +182,16 @@ class LlmPipeline(private val context: Context) {
                 )
             )
 
-            // START TIMER
             val startTime = System.currentTimeMillis()
 
             val sb = StringBuilder()
             val channel = mlcEngine?.chat?.completions?.create(
                 messages = messages,
-                // RESTORED: Strict schema to force early termination!
                 response_format = OpenAIProtocol.ResponseFormat(
                     type = "json_object",
                     schema = jsonSchema
-                )
+                ),
+                max_tokens = 220
             )
 
             channel?.consumeEach { response ->
@@ -204,7 +204,7 @@ class LlmPipeline(private val context: Context) {
 
             val finalOutput = sb.toString().trim()
             if (finalOutput.isNotEmpty()) {
-                llmJsonString = finalOutput
+                llmJsonString = extractFirstCompleteJsonObject(finalOutput) ?: llmJsonString
             }
             
             // END TIMER
@@ -221,16 +221,18 @@ class LlmPipeline(private val context: Context) {
 
     fun processAndVerify(rawNotification: String, llmJsonString: String): ExtractedTransaction {
         return try {
-            val jsonObject = JSONObject(llmJsonString)
+            val jsonPayload = extractFirstCompleteJsonObject(llmJsonString)
+                ?: throw IllegalArgumentException("Incomplete or non-JSON model output")
+            val jsonObject = JSONObject(jsonPayload)
             val merchant = jsonObject.getString("merchant")
             val amount = jsonObject.getDouble("amount")
-            val category = jsonObject.getString("category")
+            val category = normalizeCategory(jsonObject.getString("category"))
 
             var isVerified = true
             var notes = "Verified successfully."
             val rawLower = rawNotification.lowercase(Locale.ROOT)
 
-            if (merchant != "Unknown" && merchant != "Error" && !rawLower.contains(merchant.lowercase(Locale.ROOT))) {
+            if (merchant != "Unknown" && merchant != "Error" && !merchantAppearsInRaw(rawLower, merchant)) {
                 isVerified = false
                 notes = "FAILED: Merchant '$merchant' not found in original text."
             }
@@ -240,8 +242,7 @@ class LlmPipeline(private val context: Context) {
                 isVerified = false
                 notes = "FAILED: Amount '$amountString' not found in original text."
             }
-            
-            // NEW: Enforce exact enum matching!
+
             if (!allowedCategories.contains(category)) {
                 isVerified = false
                 notes = "FAILED: Category '$category' is not a valid option."
@@ -253,6 +254,64 @@ class LlmPipeline(private val context: Context) {
             Log.e("LlmPipeline", "Failed to parse JSON", e)
             ExtractedTransaction("Error", 0.0, "Error", false, "JSON Parsing Failed: ${e.message}")
         }
+    }
+
+    private fun merchantAppearsInRaw(rawLower: String, merchant: String): Boolean {
+        val merchantLower = merchant.lowercase(Locale.ROOT)
+        if (rawLower.contains(merchantLower)) return true
+
+        val normalizedRaw = rawLower.replace(Regex("[^a-z0-9]"), "")
+        val normalizedMerchant = merchantLower.replace(Regex("[^a-z0-9]"), "")
+        return normalizedMerchant.isNotBlank() && normalizedRaw.contains(normalizedMerchant)
+    }
+
+    private fun extractFirstCompleteJsonObject(text: String): String? {
+        var start = -1
+        var depth = 0
+        var inString = false
+        var escaping = false
+
+        for (i in text.indices) {
+            val c = text[i]
+
+            if (escaping) {
+                escaping = false
+                continue
+            }
+            if (c == '\\' && inString) {
+                escaping = true
+                continue
+            }
+            if (c == '"') {
+                inString = !inString
+                continue
+            }
+            if (inString) continue
+
+            if (c == '{') {
+                if (depth == 0) start = i
+                depth++
+            } else if (c == '}') {
+                if (depth > 0) {
+                    depth--
+                    if (depth == 0 && start >= 0) {
+                        return text.substring(start, i + 1)
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private fun normalizeCategory(rawCategory: String): String {
+        val trimmed = rawCategory.trim()
+        allowedCategories.firstOrNull { it.equals(trimmed, ignoreCase = true) }?.let { return it }
+
+        if (trimmed.length == 1) {
+            val matches = allowedCategories.filter { it.startsWith(trimmed, ignoreCase = true) }
+            if (matches.size == 1) return matches.first()
+        }
+        return trimmed
     }
 
     fun getBestLlmDevice(): String {

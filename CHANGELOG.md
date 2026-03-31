@@ -2,7 +2,196 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
-## 2026-03-29 - AI Assistant (Comprehensive Consolidation Update)
+## 2026-03-30 - AI Assistant (Rollback: Remove Persisted Transaction Type + Reliability/Perf Pass)
+
+### Requested Rollback Applied
+* Reverted persistent transaction storage back to the pre-type schema (no `type` column in `transactions`).
+* Rationale: prior no-type flow was more stable for current extraction quality and avoids losing records due to type misclassification.
+
+### Database Changes
+* Updated `app/src/main/java/com/example/nemebudget/db/TransactionEntity.kt`:
+  * Removed entity field `type`.
+  * Removed mapping to/from `TransactionType` in entity mappers.
+* Updated `app/src/main/java/com/example/nemebudget/db/TransactionDao.kt`:
+  * Removed type-dependent queries (`getTransactionsByType`, `getTotalByType`).
+* Updated `app/src/main/java/com/example/nemebudget/db/AppDatabase.kt`:
+  * Bumped DB version to `3`.
+  * Added `MIGRATION_2_3` that rebuilds `transactions` without the `type` column:
+    1) create `transactions_new` (legacy shape)
+    2) copy shared columns from old `transactions`
+    3) drop old table and rename new table
+  * Kept `MIGRATION_1_2` for older installs and chained both migrations.
+
+### LLM Pipeline Contract Rollback
+* Updated `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt`:
+  * Reverted extraction JSON/schema back to keys: `merchant`, `amount`, `category`.
+  * Removed `transactionType` from `ExtractedTransaction`, schema `required` list, prompts, and verification path.
+  * Kept strict category enum guidance + normalization helper for single-letter outputs.
+  * Kept bounded generation (`max_tokens = 96`) and retry correction prompt with exact category list.
+
+### Three Approved Follow-Ups Applied
+1) **Do not silently drop recoverable notifications**
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt`:
+  * On verification failure, if merchant/amount are still high-signal, insert fallback transaction with `Category.OTHER` and lower confidence (`0.45f`) instead of dropping.
+  * Still marks raw row processed to avoid infinite loops.
+
+2) **Prompt/token hardening**
+* Retry correction now restates exact category list and JSON key contract.
+* Category abbreviation discouragement retained.
+
+3) **Frame-skip mitigation pass**
+* Existing chunk/yield and startup throttling remain in place.
+* Additional repository logic now avoids repeated retry storms from recoverable-but-invalid category cases by persisting fallback transaction.
+
+### Other Alignment
+* Updated CSV export in `RealRepository` to remove the `Type` column from header/data rows to match reverted schema.
+* Budget aggregation now follows legacy no-type behavior (sum all persisted transactions by category).
+
+### Validation
+* Ran `./gradlew.bat :app:compileDebugKotlin`.
+* Result: **BUILD SUCCESSFUL**.
+
+---
+
+## 2026-03-30 - AI Assistant (Crash Fix: Room Migration 1->2)
+
+### Crash Symptoms
+* App crashed at launch with:
+  * `IllegalStateException: A migration from 1 to 2 was required but not found`
+* Trigger point was first Room open of encrypted DB (`nemebudget_secure.db`) after schema version was bumped to `2`.
+
+### Root Cause
+* `AppDatabase` version increased from `1` to `2` (new `transactions` table + new columns on `raw_notifications`) but no explicit Room migration path was registered.
+* Room intentionally refuses to open to prevent silent data loss.
+
+### Fix Applied
+* Updated `app/src/main/java/com/example/nemebudget/db/AppDatabase.kt`:
+  * Added `MIGRATION_1_2` using `Migration(1, 2)` + `SupportSQLiteDatabase` SQL.
+  * Registered it in builder with `.addMigrations(MIGRATION_1_2)`.
+* Migration SQL performs:
+  1) `ALTER TABLE raw_notifications ADD COLUMN processed INTEGER NOT NULL DEFAULT 0`
+  2) `ALTER TABLE raw_notifications ADD COLUMN errorMessage TEXT`
+  3) `CREATE TABLE IF NOT EXISTS transactions (...)`
+
+### Why this preserves security/data
+* SQLCipher path is unchanged (`SupportOpenHelperFactory(passphrase)` still used).
+* Migration runs inside the same encrypted database file, so existing user data remains encrypted and is upgraded in-place.
+
+### Validation
+* `./gradlew.bat :app:compileDebugKotlin` passes after change.
+* Runtime expectation: existing installs on schema v1 should now open without destructive reset and migrate to v2 automatically.
+
+---
+
+## 2026-03-30 - AI Assistant (Build Triage: KSP + LLM Contract Fixes)
+
+### What Broke
+* `:app:kspDebugKotlin` failed with `Unused parameter: errorMessage` in `RawNotificationDao.markAsFailed(...)`.
+* `:app:compileDebugKotlin` then failed in `LlmPipeline.extractWithRetry(...)` because `ExtractedTransaction` added `transactionType` but one fallback constructor call still used the old argument shape.
+
+### Fixes Applied
+* Updated `app/src/main/java/com/example/nemebudget/db/RawNotificationDao.kt`:
+  * Changed `markAsFailed` query to bind `errorMessage` directly:
+    * from `UPDATE raw_notifications SET processed = 1 WHERE id = :id`
+    * to `UPDATE raw_notifications SET processed = 1, errorMessage = :errorMessage WHERE id = :id`
+  * Rationale: Room/KSP requires all DAO method params to be used by SQL placeholders.
+* Updated `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt`:
+  * Fixed fallback `ExtractedTransaction(...)` call to include `transactionType` and correct parameter ordering.
+  * Aligned fallback/default JSON payloads with current schema by including `transactionType` in model-not-found and engine-failure defaults.
+  * Rationale: keep runtime fallbacks schema-compatible and avoid constructor mismatch after contract expansion.
+
+### Validation
+* Ran `./gradlew.bat :app:compileDebugKotlin` from repo root.
+* Result: **BUILD SUCCESSFUL**.
+
+---
+
+## 2026-03-30 - AI Assistant (Payment Support + RealRepository Implementation)
+
+### Major Architectural Additions
+
+#### 1. **TransactionType Enum & Income/Expense Support**
+* Added `TransactionType` enum to `SharedModels.kt` with values `EXPENSE` and `INCOME`.
+* Updated `Transaction` domain model to include `type: TransactionType = TransactionType.EXPENSE` (backward compatible default).
+* **Why this matters:** The app now distinguishes between money going OUT (expenses, purchases) and money coming IN (paychecks, transfers, payments received). Budgets will only sum EXPENSE transactions, but users can view full income history.
+
+#### 2. **LLM Pipeline Extended for Income Detection**
+* Updated `ExtractedTransaction` data class in `LlmPipeline.kt` to include `transactionType: String` field (output from Qwen).
+* Expanded JSON schema to include `transactionType` enum constraint: `["EXPENSE", "INCOME"]`.
+* Updated system prompt to teach Qwen to recognize payment keywords:
+  - **EXPENSE keywords:** "charged", "purchase", "payment sent", "withdrawal", "debit"
+  - **INCOME keywords:** "received", "credited", "deposited", "payment received", "transferred to you"
+* Updated `processAndVerify()` to validate `transactionType` enum and handle both directions.
+* **Technical details:** The grammar sampler in MLC LLM reads the schema and physically constrains the model to only output EXPENSE or INCOME—no hallucination possible.
+
+#### 3. **Database Schema: Transaction Storage**
+* Created `TransactionEntity.kt` as the Room entity for storing parsed transactions in encrypted database:
+  - Fields: `id`, `merchant`, `amount`, `categoryLabel`, `date`, `isAiParsed`, `confidence`, `rawNotificationText`, `type`
+  - Includes mapper functions: `toDomain()` to convert to domain `Transaction`, and extension `Transaction.toEntity()` for reverse
+  - **Why a separate entity:** SQLite needs strings for enums and integers for booleans; domain models use Kotlin types. The entity layer handles this translation.
+* Updated `RawNotification` entity to track processing state:
+  - Added `processed: Int` (0 = pending, 1 = processed) to avoid reprocessing same notification
+  - Added `errorMessage: String?` to store failure reasons for debugging
+
+#### 4. **Data Access Layer: TransactionDao**
+* Created `TransactionDao.kt` with full CRUD operations as suspend functions + Flow observables:
+  - `getAllTransactions()`: Flow<List> for reactive UI updates
+  - `getTransactionsByDateRange()`: For monthly/weekly filtering
+  - `getLatestTransaction()`, `insertTransaction()`, `updateTransaction()`, `deleteTransaction()`
+  - `getTransactionCount()`, `getTotalByType()`: For stats and budget calculations
+  - All queries use Flow for automatic UI reactivity when data changes
+* Updated `RawNotificationDao.kt` with batch processing support:
+  - `getUnprocessedRawNotifications(limit)`: Fetches pending batch
+  - `markAsProcessed(id)`, `markAsFailed(id, errorMessage)`: Tracks processing state
+  - `getUnprocessedCount()`: Returns Flow<Int> so Settings screen can show real-time pending count
+
+#### 5. **RealRepository: The Missing Piece**
+* Created `RealRepository.kt` implementing `AppRepository` interface—this is what was missing!
+  - **Before:** UI was using `FakeRepository` (in-memory mock data, no database persistence)
+  - **After:** UI can now use `RealRepository` to read/write actual encrypted database
+  - All transaction queries map database entities → domain models via `toDomain()`
+  - Budget calculations compute spent totals by filtering EXPENSE transactions and summing by category
+  - `processPendingNotifications(limit)` orchestrates the full pipeline:
+    1. Fetch unprocessed raw notifications
+    2. Run each through LLM extraction with retry logic
+    3. If verified, create Transaction and insert to database
+    4. Mark raw notification as processed
+    5. Return count of successful transactions created
+* Handles error states: if LLM fails, mark row as failed (not skipped) to preserve audit trail
+
+#### 6. **Database Schema Version Bump**
+* Updated `AppDatabase` to version 2 (from version 1) to accommodate:
+  - New `transactions` table with `TransactionEntity`
+  - New fields in `raw_notifications`: `processed`, `errorMessage`
+* Room will auto-migrate schema on next app launch with `@Migrate` if needed, or clear data if missing migration
+
+### Integration Points Explained
+
+**Data Flow Lifecycle:**
+1. **Ingest:** `BankNotificationListenerService` receives push → saves to `raw_notifications` with `processed=0`
+2. **Batch Process:** `RealRepository.processPendingNotifications()` → fetches unprocessed → LLM parses → inserts to `transactions` → marks `processed=1`
+3. **UI Display:** `SettingsViewModel` observes `Repository.getAllTransactions()` → Flow automatically updates Composables
+4. **Manual Edit:** User taps transaction category → `Repository.updateTransaction()` → Room updates row → Flow notifies UI
+
+**Why This Architecture:**
+- **Separation of concerns:** Database layer doesn't know about Compose; UI doesn't know about SQLCipher
+- **Reactive:** Flow-based queries mean UI always sees latest data without polling
+- **Auditable:** Raw notifications kept even after processing (with `processed` flag) for debugging
+- **Testable:** Each layer can be tested independently (mock `AppDatabase`, use `FakeRepository` for UI tests)
+
+### Migration Path for Existing Data
+- Existing `raw_notifications` rows will have `processed=NULL` → schema migration must set default to 0
+- No existing transactions yet, so `transactions` table starts empty
+- Settings remain in-memory until DataStore integration
+
+### Known Follow-Ups
+* Wire `RealRepository` into dependency injection (currently requires manual instantiation)
+* Persist app settings to DataStore or Room instead of in-memory
+* Implement `markGpuOptimized()` persistence for shader cache skip on relaunch
+* Performance: monitor batch processing latency with large pending queues (100+ notifications)
+* Test income transaction detection with real bank payment notifications
+
+
 
 ### Current Source-of-Truth Snapshot (as of this entry)
 * **Build/plugins** (`app/build.gradle.kts`): module uses catalog-managed plugin aliases for Android app, Compose compiler plugin, Kotlin serialization plugin, and KSP.
@@ -307,5 +496,69 @@ This enables end-to-end encryption pipeline testing without needing real bank no
     *   **Updated Model Status UI**: Corrected the hardcoded model name in `SettingsScreen.kt` to reflect "Qwen 3 0.6B".
     *   **Integrated GPU Optimization Status**: Updated `ModelStatus` (in `SharedModels.kt`), `FakeRepository.kt`, and `SettingsViewModel.kt` to track `isGpuOptimized` state. Added an "Optimize Now" button to `SettingsScreen.kt` that triggers `pipeline.warmUpEngine()` and updates the UI with progress, providing explicit user control over AOT shader compilation.
     *   **LlmTestingScreen**: Added display for `retriesUsed` in the LLM Lab UI to indicate when the LLM self-corrected.
+
+---
+
+## 2026-03-30 - AI Assistant (Optimization Persistence + Retry Hardening + Frame-Skip Pass 1)
+
+### Item 2: Persist LLM optimization state across relaunches
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt` to persist `isGpuOptimized` with `SharedPreferences`:
+  * Added pref file `nemebudget_prefs`
+  * Added key `gpu_optimized`
+  * `getModelStatus()` now returns a `MutableStateFlow<ModelStatus>` initialized from stored preference, not a hardcoded false value.
+  * `markGpuOptimized()` now writes preference and updates flow state immediately.
+  * `wipeAllData()` now resets optimization preference and status flow.
+* Rationale: previously UI always showed unoptimized after process restart because status was hardcoded; now optimization state survives app relaunch and screen navigation.
+
+### Item 3: Retry/prompt hardening for enum/type confusion
+* Updated `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt`:
+  * Retry correction prompt now includes explicit category enum list and strict transaction-type mapping reminder.
+  * Retry prompt explicitly forbids category abbreviation and restates required JSON keys.
+  * Added `max_tokens = 96` to generation call to keep responses bounded and reduce drift.
+* Existing guardrails retained and now reinforced:
+  * category normalization helper for single-letter shorthand (e.g., `E` -> `Entertainment` when unambiguous)
+  * semantic direction check rejecting `INCOME` for obvious spend phrases and vice versa.
+* Rationale: reduce loops where model emits invalid category/type combinations despite schema hints.
+
+### Frame Skipping: First mitigation pass
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/SettingsViewModel.kt`:
+  * Reduced manual processing batch size from `200` -> `80`.
+  * Reduced startup auto-processing batch from `100` -> `20`.
+  * Added startup delay (`1200ms`) before background batch starts to let initial UI render settle first.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt`:
+  * Added cooperative coroutine `yield()` every 5 processed notifications during batch processing loop.
+* Rationale: reduce long uninterrupted CPU contention that can contribute to jank/dropped frames during app startup and large processing runs.
+
+### Validation
+* Ran `./gradlew.bat :app:compileDebugKotlin`.
+* Result: **BUILD SUCCESSFUL**.
+
+---
+
+## 2026-03-30 - AI Assistant (LLM JSON Truncation Guard + Merchant Validation Hardening)
+
+### Scope (per request)
+* Kept `LlmPipeline` system prompt unchanged.
+* Focused only on truncation-safe parsing and merchant hallucination gating.
+
+### LLM JSON Truncation/Formatting Reliability
+* Updated `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt`:
+  * Increased generation budget from `max_tokens = 120` to `220` to reduce premature cut-off risk.
+  * Added `extractFirstCompleteJsonObject(...)` and used it in both generation and verification paths.
+    * During generation: accepts only a complete balanced JSON object from streamed output.
+    * During verification: rejects incomplete/non-JSON output explicitly instead of attempting partial parse.
+  * Result: truncated streams now fail deterministically as parse/verification failures rather than silently producing malformed states.
+
+### Merchant Hallucination Control
+* Updated `LlmPipeline.processAndVerify(...)` merchant check:
+  * Replaced simple substring check with `merchantAppearsInRaw(...)` that also compares normalized alphanumeric forms.
+  * Handles punctuation/spacing differences while still requiring textual evidence in original notification.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt` fallback-rescue path:
+  * Rescue insert now requires merchant evidence in raw notification (`merchantAppearsInRaw(...)`) plus positive amount.
+  * Prevents hallucinated merchant names from being persisted during non-verified fallback saves.
+
+### Validation
+* Ran `./gradlew.bat :app:compileDebugKotlin`.
+* Result: **BUILD SUCCESSFUL**.
 
 ---

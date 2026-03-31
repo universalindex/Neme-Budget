@@ -27,5 +27,11 @@ data class RawNotification(
     
     // The actual sensitive body text (e.g., "You spent $5.40 at Starbucks")
     // THIS is the text that SQLCipher will encrypt on the hard drive!
-    val text: String
+    val text: String,
+    
+    // Has this notification been processed by the LLM yet? (0 = no, 1 = yes)
+    val processed: Int = 0,
+    
+    // If processing failed, this stores the error message for debugging
+    val errorMessage: String? = null
 )
