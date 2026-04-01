@@ -67,6 +67,18 @@ class FakeRepository(
         budgetsFlow.value = generateBudgets(transactionsFlow.value)
     }
 
+    override suspend fun deleteTransaction(transaction: Transaction) {
+        transactionsFlow.value = transactionsFlow.value.filterNot { it.id == transaction.id }
+        budgetsFlow.value = generateBudgets(transactionsFlow.value)
+    }
+
+    override suspend fun addTransaction(transaction: Transaction) {
+        val currentMaxId = transactionsFlow.value.maxOfOrNull { it.id } ?: 0
+        val newTx = transaction.copy(id = currentMaxId + 1)
+        transactionsFlow.value = (listOf(newTx) + transactionsFlow.value).sortedByDescending { it.date }
+        budgetsFlow.value = generateBudgets(transactionsFlow.value)
+    }
+
     override fun getBudgets(): Flow<List<Budget>> = budgetsFlow
 
     override suspend fun upsertBudget(budget: Budget) {

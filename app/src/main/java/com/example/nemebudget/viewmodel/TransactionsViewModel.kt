@@ -56,5 +56,29 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
             }
         }
     }
-}
 
+    fun deleteTransaction(transaction: Transaction) {
+        viewModelScope.launch {
+            repo.deleteTransaction(transaction)
+        }
+    }
+
+    fun addManualTransaction(merchant: String, amount: Double, category: Category) {
+        viewModelScope.launch {
+            val safeMerchant = merchant.trim()
+            if (safeMerchant.isBlank() || amount <= 0.0) return@launch
+
+            repo.addTransaction(
+                Transaction(
+                    merchant = safeMerchant,
+                    amount = amount,
+                    category = category,
+                    date = System.currentTimeMillis(),
+                    isAiParsed = false,
+                    confidence = 1.0f,
+                    rawNotificationText = "Manually added"
+                )
+            )
+        }
+    }
+}

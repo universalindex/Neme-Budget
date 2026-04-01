@@ -2,6 +2,7 @@ package com.example.nemebudget.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -66,6 +68,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel) {
     }
 
     var editingTransaction by remember { mutableStateOf<Transaction?>(null) }
+    var addingTransaction by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -74,6 +77,9 @@ fun TransactionsScreen(viewModel: TransactionsViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Transactions", style = MaterialTheme.typography.headlineSmall)
+        Button(onClick = { addingTransaction = true }) {
+            Text("Add transaction")
+        }
         OutlinedTextField(
             value = query,
             onValueChange = viewModel::onSearchQueryChanged,
@@ -133,10 +139,24 @@ fun TransactionsScreen(viewModel: TransactionsViewModel) {
         }
     }
 
+    if (addingTransaction) {
+        AddTransactionBottomSheet(
+            onDismiss = { addingTransaction = false },
+            onAdd = { merchant, amount, category ->
+                viewModel.addManualTransaction(merchant, amount, category)
+                addingTransaction = false
+            }
+        )
+    }
+
     editingTransaction?.let { original ->
         EditTransactionBottomSheet(
             original = original,
             onDismiss = { editingTransaction = null },
+            onDelete = {
+                viewModel.deleteTransaction(original)
+                editingTransaction = null
+            },
             onSave = { merchant, amount, category ->
                 viewModel.saveEdit(
                     original = original,
@@ -164,7 +184,11 @@ private fun TransactionRow(
         else -> Color(0xFF2E7D32)
     }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onEdit)
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -207,8 +231,6 @@ private fun TransactionRow(
                     Spacer(Modifier.width(6.dp))
                     Text("\u2728")
                 }
-                Spacer(Modifier.width(10.dp))
-                TextButton(onClick = onEdit) { Text("Edit") }
             }
         }
 
@@ -229,6 +251,7 @@ private fun TransactionRow(
 private fun EditTransactionBottomSheet(
     original: Transaction,
     onDismiss: () -> Unit,
+    onDelete: () -> Unit,
     onSave: (merchant: String, amount: Double, category: Category) -> Unit
 ) {
     var merchant by remember(original.id) { mutableStateOf(original.merchant) }
@@ -278,6 +301,12 @@ private fun EditTransactionBottomSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(onClick = onDismiss) { Text("Cancel") }
                 Button(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+                Button(
                     onClick = {
                         val parsed = amountInput.toDoubleOrNull() ?: original.amount
                         val safeMerchant = merchant.trim().ifBlank { original.merchant }
@@ -294,6 +323,73 @@ private fun EditTransactionBottomSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun AddTransactionBottomSheet(
+    onDismiss: () -> Unit,
+    onAdd: (merchant: String, amount: Double, category: Category) -> Unit
+) {
+    var merchant by remember { mutableStateOf("") }
+    var amountInput by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf(Category.OTHER) }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.8f)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Add Transaction", style = MaterialTheme.typography.titleLarge)
+            OutlinedTextField(
+                value = merchant,
+                onValueChange = { merchant = it },
+                label = { Text("Merchant") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = amountInput,
+                onValueChange = { amountInput = it },
+                label = { Text("Amount") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text("Category", style = MaterialTheme.typography.labelLarge)
+            OutlinedButton(onClick = { menuExpanded = true }) {
+                Text(selectedCategory.label)
+            }
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                Category.entries.forEach { category ->
+                    DropdownMenuItem(
+                        text = { Text(category.label) },
+                        onClick = {
+                            selectedCategory = category
+                            menuExpanded = false
+                        }
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+                Button(
+                    onClick = {
+                        val parsedAmount = amountInput.toDoubleOrNull() ?: return@Button
+                        onAdd(merchant, parsedAmount, selectedCategory)
+                    }
+                ) {
+                    Text("Add")
+                }
+            }
+
             Spacer(Modifier.size(18.dp))
         }
     }

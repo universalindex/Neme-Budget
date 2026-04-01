@@ -381,7 +381,7 @@ startActivity(Intent.createChooser(shareIntent, "Export transactions"))
 > **Goal:** Swap FakeRepository for Noah's RealRepository. Hybrid pipeline verified end-to-end.
 - [ ] Integration day goal
 
-### [ ] Step 1 — Wire Up Real Repository
+### [x] Step 1 — Wire Up Real Repository
 In your Application class or ViewModel factory:
 ```kotlin
 // Before:
@@ -406,7 +406,7 @@ Your job today is verification, not debugging his pipeline. Test:
 ## [ ] 🏁 April 1–2 — Onboarding, Polish & Demo Prep
 - [ ] April 1–2 goal
 
-### [ ] Step 1 — Onboarding Flow (3 screens, all Eli)
+### [x] Step 1 — Onboarding Flow (3 screens, all Eli)
 **Screen 1 — Welcome:**
 - Big headline: *"Your money. Your device. No cloud."*
 - 3 short bullets: "Local AI", "Zero bank logins", "Encrypted on your phone"
@@ -432,6 +432,9 @@ Your job today is verification, not debugging his pipeline. Test:
 ### [ ] Step 3 — Demo Script (Practice This 5+ Times)
 This is your 3-minute live demo script for April 4th:
 ```
+
+- [x] Drafted script in `DEMO_SCRIPT.md`.
+- [ ] Live practice runs (5+) still pending on physical demo device.
 1. Open app -> show Welcome screen, explain local-only privacy
 2. Show Dashboard with pre-loaded fake data (you loaded these earlier)
 3. Open Settings -> type "America First" in Primary Bank, show Ignore toggle for Venmo
@@ -455,6 +458,9 @@ Record on a physical device using screen recording + narration:
 Write the **User Experience** and **Innovation** sections:
 - UX: clean Compose UI, real-time updates, edit-to-teach flow
 - Innovation: zero bank API, zero cloud, local Qwen AI on-device
+
+- [x] Draft copy created in `DEVPOST_DRAFT.md`.
+- [ ] Final Devpost form entry + submission still pending.
 
 ---
 

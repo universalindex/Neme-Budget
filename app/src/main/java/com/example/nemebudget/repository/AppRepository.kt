@@ -11,6 +11,8 @@ interface AppRepository {
     fun getAllTransactions(): Flow<List<Transaction>>
     fun getTransactionsByDateRange(start: Long, end: Long): Flow<List<Transaction>>
     suspend fun updateTransaction(transaction: Transaction)
+    suspend fun deleteTransaction(transaction: Transaction)
+    suspend fun addTransaction(transaction: Transaction)
 
     fun getBudgets(): Flow<List<Budget>>
     suspend fun upsertBudget(budget: Budget)

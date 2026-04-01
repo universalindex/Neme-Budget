@@ -44,22 +44,24 @@ import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
-import androidx.navigation.compose.NavHost
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.nemebudget.ui.theme.NemeBudgetTheme
 import com.example.nemebudget.llm.ExtractedTransaction
 import com.example.nemebudget.llm.LlmPipeline
-import com.example.nemebudget.pipeline.NotificationBatchProcessor
 import com.example.nemebudget.db.AppDatabase
-import com.example.nemebudget.repository.FakeRepository
 import com.example.nemebudget.repository.RealRepository
 import com.example.nemebudget.ui.dashboard.DashboardScreen
 import com.example.nemebudget.ui.navigation.AppDestination
 import com.example.nemebudget.ui.navigation.bottomDestinations
 import com.example.nemebudget.ui.screens.BudgetsScreen
+import com.example.nemebudget.ui.screens.OnboardingModelScreen
+import com.example.nemebudget.ui.screens.OnboardingPermissionScreen
+import com.example.nemebudget.ui.screens.OnboardingWelcomeScreen
 import com.example.nemebudget.ui.screens.SettingsScreen
 import com.example.nemebudget.ui.screens.TransactionsScreen
 import com.example.nemebudget.viewmodel.BudgetsViewModel
@@ -88,6 +90,9 @@ private fun MainApp() {
     val showBottomBar = bottomDestinations.any { it.route == currentRoute }
 
     val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("nemebudget_prefs", Context.MODE_PRIVATE) }
+    var onboardingCompleted by remember { mutableStateOf(prefs.getBoolean("onboarding_completed", false)) }
+    var listenerEnabled by remember { mutableStateOf(isNotificationListenerEnabled(context)) }
     // Hoist LlmPipeline so it stays in RAM across tab navigation
     val pipeline = remember { LlmPipeline(context) }
     // Open the encrypted database (SQLCipher)
@@ -103,14 +108,32 @@ private fun MainApp() {
     val postNotificationsPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { /* no-op: status is checked on recomposition */ }
+
     LaunchedEffect(Unit) {
         settingsViewModel.processOnAppOpenIfNeeded()
+    }
+
+    LaunchedEffect(onboardingCompleted) {
+        while (!onboardingCompleted) {
+            listenerEnabled = isNotificationListenerEnabled(context)
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
+    LaunchedEffect(onboardingCompleted, listenerEnabled) {
+        if (!onboardingCompleted) return@LaunchedEffect
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !isPostNotificationsGranted(context)) {
             postNotificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (!isNotificationListenerEnabled(context)) {
+        if (!listenerEnabled) {
             showListenerPermissionDialog = true
         }
+    }
+
+    val startDestination = if (onboardingCompleted) {
+        AppDestination.Dashboard.route
+    } else {
+        AppDestination.OnboardingWelcome.route
     }
 
     Scaffold(
@@ -146,9 +169,39 @@ private fun MainApp() {
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = AppDestination.Dashboard.route,
+            startDestination = startDestination,
             modifier = Modifier.padding(innerPadding)
         ) {
+            composable(AppDestination.OnboardingWelcome.route) {
+                OnboardingWelcomeScreen(
+                    onGetStarted = { navController.navigate(AppDestination.OnboardingPermission.route) }
+                )
+            }
+            composable(AppDestination.OnboardingPermission.route) {
+                OnboardingPermissionScreen(
+                    listenerEnabled = listenerEnabled,
+                    onGrantPermission = {
+                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    },
+                    onNext = { navController.navigate(AppDestination.OnboardingModel.route) }
+                )
+            }
+            composable(AppDestination.OnboardingModel.route) {
+                val modelStatus by settingsViewModel.modelStatus.collectAsStateWithLifecycle()
+                OnboardingModelScreen(
+                    modelStatus = modelStatus,
+                    onReady = {
+                        if (!onboardingCompleted) {
+                            prefs.edit().putBoolean("onboarding_completed", true).apply()
+                            onboardingCompleted = true
+                        }
+                        navController.navigate(AppDestination.Dashboard.route) {
+                            popUpTo(AppDestination.OnboardingWelcome.route) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
             composable(AppDestination.Dashboard.route) {
                 DashboardScreen(
                     viewModel = dashboardViewModel,
@@ -174,7 +227,7 @@ private fun MainApp() {
         }
     }
 
-    if (showListenerPermissionDialog && !isNotificationListenerEnabled(context)) {
+    if (showListenerPermissionDialog && onboardingCompleted && !isNotificationListenerEnabled(context)) {
         AlertDialog(
             onDismissRequest = { showListenerPermissionDialog = false },
             title = { Text("Enable Notification Access") },

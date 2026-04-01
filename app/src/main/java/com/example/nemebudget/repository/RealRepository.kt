@@ -88,6 +88,14 @@ class RealRepository(
         db.transactionDao().updateTransaction(transaction.toEntity())
     }
 
+    override suspend fun deleteTransaction(transaction: Transaction) {
+        db.transactionDao().deleteTransaction(transaction.id)
+    }
+
+    override suspend fun addTransaction(transaction: Transaction) {
+        db.transactionDao().insertTransaction(transaction.toEntity())
+    }
+
     /**
      * Calculate budgets by summing transactions by category and type.
      * The UI calls this to show "Spent $X of $Y in Dining".

@@ -12,6 +12,9 @@ sealed class AppDestination(
     val label: String,
     val icon: ImageVector
 ) {
+    data object OnboardingWelcome : AppDestination("onboarding_welcome", "Welcome", Icons.Filled.Home)
+    data object OnboardingPermission : AppDestination("onboarding_permission", "Permissions", Icons.Outlined.Settings)
+    data object OnboardingModel : AppDestination("onboarding_model", "Model", Icons.Outlined.Settings)
     data object Dashboard : AppDestination("dashboard", "Dashboard", Icons.Filled.Home)
     data object Transactions : AppDestination("transactions", "Transactions", Icons.AutoMirrored.Filled.List)
     data object Budgets : AppDestination("budgets", "Budgets", Icons.Filled.AccountCircle)

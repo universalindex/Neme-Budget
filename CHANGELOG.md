@@ -2,6 +2,57 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-03-31 - AI Assistant (Apr 1-2 Plan Work: Onboarding Flow + Checklist Progress)
+
+### Onboarding Flow Added
+* Added `app/src/main/java/com/example/nemebudget/ui/screens/OnboardingScreens.kt` with:
+  * `OnboardingWelcomeScreen`
+  * `OnboardingPermissionScreen`
+  * `OnboardingModelScreen`
+* Updated `app/src/main/java/com/example/nemebudget/ui/navigation/AppDestination.kt` with onboarding routes:
+  * `onboarding_welcome`
+  * `onboarding_permission`
+  * `onboarding_model`
+* Updated `app/src/main/java/com/example/nemebudget/MainActivity.kt` to:
+  * Choose start destination based on persisted `onboarding_completed` flag
+  * Poll listener permission state every second during onboarding permission step
+  * Navigate first launch through Welcome -> Permission -> Model
+  * Persist onboarding completion and route into Dashboard
+  * Keep the old listener reminder dialog only for post-onboarding sessions
+
+### Plan Tracking Updates
+* Updated `DEV1_FRONTEND_PLAN.md`:
+  * Marked **Integration Day Step 1 (Wire Up Real Repository)** as complete.
+  * Marked **April 1-2 Step 1 (Onboarding Flow)** as complete.
+  * Added explicit implementation notes under both completed steps.
+  * Added Apr 2 prep status notes for Demo Script and Devpost draft deliverables.
+* Added Apr 2 prep docs:
+  * `DEMO_SCRIPT.md` (3-minute live demo runbook + dry-run checklist)
+  * `DEVPOST_DRAFT.md` (draft "User Experience" and "Innovation" sections)
+
+### Rationale
+* This completes the biggest code-deliverable block for the Apr 1-2 plan while leaving manual tasks (dark-mode audit on physical device, demo recording, Devpost submission) as checklist follow-through tasks.
+
+## 2026-03-31 - AI Assistant (Transactions UX: Delete + Manual Add)
+
+### What was added
+* Extended `app/src/main/java/com/example/nemebudget/repository/AppRepository.kt` with:
+  * `deleteTransaction(transaction: Transaction)`
+  * `addTransaction(transaction: Transaction)`
+* Implemented both methods in `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt` via `TransactionDao`.
+* Wired actions in `app/src/main/java/com/example/nemebudget/viewmodel/TransactionsViewModel.kt`:
+  * `deleteTransaction(...)`
+  * `addManualTransaction(...)` with basic validation (non-blank merchant, amount > 0).
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`:
+  * Added **Add transaction** button and `AddTransactionBottomSheet` (merchant, amount, category).
+  * Added **Delete** action in `EditTransactionBottomSheet` so users can remove transactions from the editor flow.
+
+### Rationale
+* Users need direct ledger control from the Transactions screen:
+  * remove bad/duplicate rows quickly,
+  * manually add missing transactions without waiting for notification ingest.
+* Kept the flow aligned with existing architecture (UI -> ViewModel -> Repository -> DAO) so list updates remain reactive through existing `Flow` streams.
+
 ## 2026-03-30 - AI Assistant (Rollback: Remove Persisted Transaction Type + Reliability/Perf Pass)
 
 ### Requested Rollback Applied
