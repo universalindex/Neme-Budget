@@ -43,6 +43,14 @@ data class AppSettings(
     val customRules: List<String> = emptyList()
 )
 
+data class RejectedNotification(
+    val id: Int,
+    val title: String,
+    val text: String,
+    val errorMessage: String,
+    val postTimeMillis: Long
+)
+
 data class ModelStatus(
     val isDownloaded: Boolean,
     val downloadProgress: Float,

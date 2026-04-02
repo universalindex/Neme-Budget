@@ -41,7 +41,17 @@ class NotificationBatchProcessor(
 
                 val extraction = pipeline.extractWithRetry(rawNotification = raw.text, maxAttempts = 2)
                 val tx = extraction.transaction
-                if (tx.isVerified) {
+                val rejectReason = when {
+                    tx.merchant.equals("Error", ignoreCase = true) -> "merchant=Error"
+                    tx.merchant.equals("Unknown", ignoreCase = true) || tx.merchant.isBlank() -> "merchant missing/unknown"
+                    tx.amount <= 0.0 -> "amount <= 0"
+                    else -> null
+                }
+
+                if (rejectReason != null) {
+                    skippedCount++
+                    Log.d("BatchProcessor", "Rejected extraction for rawId=${raw.id}: $rejectReason")
+                } else if (tx.isVerified) {
                     val category = Category.entries.firstOrNull {
                         it.label.equals(tx.category, ignoreCase = true)
                     } ?: Category.OTHER

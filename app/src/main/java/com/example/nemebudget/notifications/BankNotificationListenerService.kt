@@ -6,11 +6,11 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.example.nemebudget.db.AppDatabase
 import com.example.nemebudget.db.RawNotification
+import com.example.nemebudget.pipeline.TransactionalNotificationGate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 /**
  * 1. The Interceptor
@@ -20,12 +20,6 @@ import java.util.Locale
 class BankNotificationListenerService : NotificationListenerService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // Keywords used to identify potential financial transactions
-    private val financialKeywords = listOf(
-        "spent", "paid", "charge", "transaction", "payment", 
-        "purchase", "receipt", "sent", "received", "transfer", "$"
-    )
 
     // Known SMS shortcodes for banks (Add more as needed)
     private val bankShortcodes = listOf("24273", "73422", "23411")
@@ -45,7 +39,6 @@ class BankNotificationListenerService : NotificationListenerService() {
 
         val title = extras.getString(Notification.EXTRA_TITLE) ?: ""
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
-        val fullContent = "$title $text".lowercase(Locale.ROOT)
 
         Log.d("BankListener", "Intercepted from: $packageName | Title: $title")
 
@@ -60,16 +53,15 @@ class BankNotificationListenerService : NotificationListenerService() {
             }
         }
 
-        // 3. General Keyword Filter
-        if (isFinancialNotification(fullContent)) {
+        // 3. Strict transactional filter
+        // Shared strict gate: only persist high-confidence transaction candidates.
+        val gate = TransactionalNotificationGate.evaluate(title = title, text = text)
+        if (gate.passed) {
             Log.d("BankListener", "Match found! Saving to encrypted database.")
             saveToEncryptedVault(packageName, sbn.postTime, title, text)
+        } else {
+            Log.d("BankListener", "Skipped at scan-time gate: ${gate.reason}")
         }
-    }
-
-    private fun isFinancialNotification(content: String): Boolean {
-        if (content.isBlank()) return false
-        return financialKeywords.any { keyword -> content.contains(keyword) }
     }
 
     private fun saveToEncryptedVault(packageName: String, postTime: Long, title: String, text: String) {

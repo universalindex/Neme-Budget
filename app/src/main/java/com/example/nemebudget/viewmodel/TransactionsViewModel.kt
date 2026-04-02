@@ -3,6 +3,7 @@ package com.example.nemebudget.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.repository.AppRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +35,9 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val rejectedNotifications: StateFlow<List<RejectedNotification>> = repo.getRejectedNotifications()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     fun onSearchQueryChanged(query: String) {
         searchQuery.value = query
     }
@@ -54,6 +58,67 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
                     repo.saveSettings(currentSettings.copy(customRules = currentSettings.customRules + newRule))
                 }
             }
+        }
+    }
+
+    fun addManualTransaction(merchant: String, amount: Double, category: Category) {
+        val safeMerchant = merchant.trim().ifBlank { "Manual Entry" }
+        val safeAmount = amount.coerceAtLeast(0.01)
+        viewModelScope.launch {
+            repo.addTransaction(
+                Transaction(
+                    merchant = safeMerchant,
+                    amount = safeAmount,
+                    category = category,
+                    date = System.currentTimeMillis(),
+                    isAiParsed = false,
+                    confidence = 1.0f,
+                    rawNotificationText = "Manual transaction"
+                )
+            )
+        }
+    }
+
+    fun deleteTransaction(id: Int) {
+        viewModelScope.launch {
+            repo.deleteTransaction(id)
+        }
+    }
+
+    fun updateRejectedItem(id: Int, title: String, text: String, reason: String) {
+        viewModelScope.launch {
+            repo.updateRejectedNotification(id, title, text, reason)
+        }
+    }
+
+    fun resolveRejectedAsTransaction(
+        errorId: Int,
+        merchant: String,
+        amount: Double,
+        category: Category,
+        rawNotificationText: String
+    ) {
+        val safeMerchant = merchant.trim().ifBlank { "Manual Entry" }
+        val safeAmount = amount.coerceAtLeast(0.01)
+        viewModelScope.launch {
+            repo.addTransaction(
+                Transaction(
+                    merchant = safeMerchant,
+                    amount = safeAmount,
+                    category = category,
+                    date = System.currentTimeMillis(),
+                    isAiParsed = false,
+                    confidence = 0.85f,
+                    rawNotificationText = rawNotificationText
+                )
+            )
+            repo.deleteRejectedNotification(errorId)
+        }
+    }
+
+    fun deleteRejectedItem(id: Int) {
+        viewModelScope.launch {
+            repo.deleteRejectedNotification(id)
         }
     }
 }

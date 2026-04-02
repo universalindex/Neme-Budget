@@ -80,4 +80,13 @@ interface RawNotificationDao {
      */
     @Query("SELECT COUNT(*) FROM raw_notifications WHERE processed = 0")
     fun getUnprocessedCount(): Flow<Int>
+
+    @Query("SELECT * FROM raw_notifications WHERE processed = 1 AND errorMessage IS NOT NULL ORDER BY postTimeMillis DESC")
+    fun getRejectedNotifications(): Flow<List<RawNotification>>
+
+    @Query("UPDATE raw_notifications SET title = :title, text = :text, errorMessage = :reason WHERE id = :id")
+    suspend fun updateRejectedNotification(id: Int, title: String, text: String, reason: String)
+
+    @Query("DELETE FROM raw_notifications WHERE id = :id")
+    suspend fun deleteById(id: Int)
 }

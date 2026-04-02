@@ -1,19 +1,26 @@
 package com.example.nemebudget.repository
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.example.nemebudget.db.AppDatabase
+import com.example.nemebudget.db.RawNotification
 import com.example.nemebudget.db.toEntity
 import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.Budget
 import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.ModelStatus
+import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
+import com.example.nemebudget.pipeline.TransactionalNotificationGate
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.yield
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -80,12 +87,20 @@ class RealRepository(
         }
     }
 
+    override suspend fun addTransaction(transaction: Transaction) {
+        db.transactionDao().insertTransaction(transaction.toEntity())
+    }
+
     /**
      * User manually edited a transaction (e.g., corrected a category).
      * We update it in the database.
      */
     override suspend fun updateTransaction(transaction: Transaction) {
         db.transactionDao().updateTransaction(transaction.toEntity())
+    }
+
+    override suspend fun deleteTransaction(id: Int) {
+        db.transactionDao().deleteTransaction(id)
     }
 
     /**
@@ -170,7 +185,26 @@ class RealRepository(
             var processedCount = 0
             pending.forEachIndexed { index, raw ->
                 try {
+                    val gate = TransactionalNotificationGate.evaluate(raw.title, raw.text)
+                    if (!gate.passed) {
+                        Log.d(TAG, "Skipped rawId=${raw.id} before LLM: ${gate.reason}")
+                        db.rawNotificationDao().markAsProcessed(raw.id)
+                        if ((index + 1) % 5 == 0) yield()
+                        return@forEachIndexed
+                    }
+
                     val result = llmPipeline.extractWithRetry(raw.text)
+
+                    val rejectReason = rejectionReasonFor(result.transaction.merchant, result.transaction.amount)
+                    if (rejectReason != null) {
+                        db.rawNotificationDao().markAsFailed(raw.id, rejectReason)
+                        if (result.transaction.merchant.equals("Error", ignoreCase = true)) {
+                            notifyRejectedExtraction(raw, rejectReason)
+                        }
+                        Log.w(TAG, "✗ Rejected extraction for rawId=${raw.id}: $rejectReason")
+                        if ((index + 1) % 5 == 0) yield()
+                        return@forEachIndexed
+                    }
 
                     if (result.transaction.isVerified) {
                         val txn = Transaction(
@@ -226,6 +260,48 @@ class RealRepository(
         }
     }
 
+    override fun getRejectedNotifications(): Flow<List<RejectedNotification>> {
+        return db.rawNotificationDao().getRejectedNotifications().map { rows ->
+            rows.mapNotNull { row ->
+                row.errorMessage?.let { reason ->
+                    RejectedNotification(
+                        id = row.id,
+                        title = row.title,
+                        text = row.text,
+                        errorMessage = reason,
+                        postTimeMillis = row.postTimeMillis
+                    )
+                }
+            }
+        }
+    }
+
+    override suspend fun addRejectedNotification(title: String, text: String, reason: String) {
+        db.rawNotificationDao().insert(
+            RawNotification(
+                packageName = context.packageName,
+                postTimeMillis = System.currentTimeMillis(),
+                title = title.ifBlank { "Manual Rejection" },
+                text = text,
+                processed = 1,
+                errorMessage = reason.ifBlank { "Manually added" }
+            )
+        )
+    }
+
+    override suspend fun updateRejectedNotification(id: Int, title: String, text: String, reason: String) {
+        db.rawNotificationDao().updateRejectedNotification(
+            id = id,
+            title = title.ifBlank { "Error" },
+            text = text,
+            reason = reason.ifBlank { "Edited" }
+        )
+    }
+
+    override suspend fun deleteRejectedNotification(id: Int) {
+        db.rawNotificationDao().deleteById(id)
+    }
+
     private fun merchantAppearsInRaw(merchant: String, rawText: String): Boolean {
         val rawLower = rawText.lowercase(Locale.ROOT)
         val merchantLower = merchant.lowercase(Locale.ROOT)
@@ -234,6 +310,45 @@ class RealRepository(
         val normalizedRaw = rawLower.replace(Regex("[^a-z0-9]"), "")
         val normalizedMerchant = merchantLower.replace(Regex("[^a-z0-9]"), "")
         return normalizedMerchant.isNotBlank() && normalizedRaw.contains(normalizedMerchant)
+    }
+
+    private fun rejectionReasonFor(merchant: String, amount: Double): String? {
+        if (merchant.equals("Error", ignoreCase = true)) {
+            return "Rejected: merchant=Error from LLM output"
+        }
+        if (merchant.equals("Unknown", ignoreCase = true) || merchant.isBlank()) {
+            return "Rejected: merchant missing/unknown"
+        }
+        if (amount <= 0.0) {
+            return "Rejected: amount must be greater than 0"
+        }
+        return null
+    }
+
+    private fun notifyRejectedExtraction(raw: RawNotification, reason: String) {
+        val manager = NotificationManagerCompat.from(context)
+        if (!manager.areNotificationsEnabled()) return
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                REJECTION_CHANNEL_ID,
+                "NemeBudget Processing Alerts",
+                NotificationManager.IMPORTANCE_DEFAULT
+            )
+            val systemManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            systemManager.createNotificationChannel(channel)
+        }
+
+        val message = "${raw.title.ifBlank { "Notification" }} rejected: $reason"
+        val notification = NotificationCompat.Builder(context, REJECTION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("Transaction Rejected")
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText("${raw.text}\n$reason"))
+            .setAutoCancel(true)
+            .build()
+
+        manager.notify(raw.id + 20_000, notification)
     }
 
     /**
@@ -295,4 +410,9 @@ class RealRepository(
             csv.toString()
         }
     }
+
+    companion object {
+        private const val REJECTION_CHANNEL_ID = "nemebudget_rejections"
+    }
 }
+

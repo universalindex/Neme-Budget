@@ -8,6 +8,25 @@
 > 4) [ ] Replace indeterminate processing spinner with per-notification determinate progress bar.
 > 5) [ ] Tune batch throughput (start with size 10) and verify transaction history/count updates correctly.
 
+> **New Follow-Up Queue (Added 2026-04-01):**
+> 1) [ ] **Dashboard month swipe navigation**
+>    - Add horizontal swipe gesture to change month in dashboard (parity with arrow buttons).
+>    - Acceptance: swipe left/right updates month label + data consistently with button behavior.
+> 2) [ ] **Better budget editing UX**
+>    - Improve budget limit editing flow (discoverability, validation, and save feedback).
+>    - Acceptance: user can edit category budget limits without confusing state and with clear confirmation.
+> 3) [ ] **Error resolver UX redesign + missing editing features**
+>    - Replace inline sheet trigger with compact banner/row: `Errors detected - click here to address`.
+>    - Open dedicated error-resolution screen (not the same swipe-up creator style as transaction add).
+>    - Ensure editing includes practical correction fields (merchant/value/category) and source notification context.
+>    - Acceptance: when errors exist, user can enter resolver screen, review raw context, edit correction fields, and resolve/delete.
+> 4) [ ] **Tune add-transaction FAB sizing**
+>    - Current plus bubble is oversized; reduce to a configurable size constant for quick UX tuning.
+>    - Acceptance: final FAB size is visually balanced and easy to tap.
+> 5) [ ] **Clearer dashboard safe-to-spend**
+>    - Improve dashboard communication for safe-to-spend, including per-category clarity (not only global number).
+>    - Acceptance: user can understand both overall safe-to-spend and category-level spending context at a glance.
+
 ---
 
 ## Your Role

@@ -4,6 +4,7 @@ import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.Budget
 import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.ModelStatus
+import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.pipeline.NotificationBatchProcessor
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +43,7 @@ class FakeRepository(
         )
     )
     private val pendingNotificationCountFlow = MutableStateFlow(3)
+    private val rejectedFlow = MutableStateFlow<List<RejectedNotification>>(emptyList())
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
@@ -60,10 +62,22 @@ class FakeRepository(
         return transactionsFlow.map { txns -> txns.filter { it.date in start..end } }
     }
 
+    override suspend fun addTransaction(transaction: Transaction) {
+        val currentMaxId = transactionsFlow.value.maxOfOrNull { it.id } ?: 0
+        val row = transaction.copy(id = if (transaction.id == 0) currentMaxId + 1 else transaction.id)
+        transactionsFlow.value = (listOf(row) + transactionsFlow.value).sortedByDescending { it.date }
+        budgetsFlow.value = generateBudgets(transactionsFlow.value)
+    }
+
     override suspend fun updateTransaction(transaction: Transaction) {
         transactionsFlow.value = transactionsFlow.value.map { current ->
             if (current.id == transaction.id) transaction else current
         }
+        budgetsFlow.value = generateBudgets(transactionsFlow.value)
+    }
+
+    override suspend fun deleteTransaction(id: Int) {
+        transactionsFlow.value = transactionsFlow.value.filterNot { it.id == id }
         budgetsFlow.value = generateBudgets(transactionsFlow.value)
     }
 
@@ -122,6 +136,38 @@ class FakeRepository(
         return processedCount
     }
 
+    override fun getRejectedNotifications(): Flow<List<RejectedNotification>> = rejectedFlow
+
+    override suspend fun addRejectedNotification(title: String, text: String, reason: String) {
+        val nextId = (rejectedFlow.value.maxOfOrNull { it.id } ?: 0) + 1
+        val newItem = RejectedNotification(
+            id = nextId,
+            title = title,
+            text = text,
+            errorMessage = reason,
+            postTimeMillis = System.currentTimeMillis()
+        )
+        rejectedFlow.value = listOf(newItem) + rejectedFlow.value
+    }
+
+    override suspend fun updateRejectedNotification(id: Int, title: String, text: String, reason: String) {
+        rejectedFlow.value = rejectedFlow.value.map { current ->
+            if (current.id == id) {
+                current.copy(
+                    title = title.ifBlank { current.title },
+                    text = text,
+                    errorMessage = reason.ifBlank { current.errorMessage }
+                )
+            } else {
+                current
+            }
+        }
+    }
+
+    override suspend fun deleteRejectedNotification(id: Int) {
+        rejectedFlow.value = rejectedFlow.value.filterNot { it.id == id }
+    }
+
     override fun getModelStatus(): Flow<ModelStatus> = modelStatusFlow
 
     override suspend fun markGpuOptimized() {
@@ -135,6 +181,7 @@ class FakeRepository(
         budgetsFlow.value = emptyList()
         settingsFlow.value = AppSettings()
         pendingNotificationCountFlow.value = 0
+        rejectedFlow.value = emptyList()
         batchProcessor?.clearPendingQueue()
     }
 

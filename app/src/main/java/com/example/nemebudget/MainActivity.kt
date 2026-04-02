@@ -40,15 +40,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.NotificationCompat
-import androidx.navigation.compose.NavHost
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.navigation.NavType
 import com.example.nemebudget.ui.theme.NemeBudgetTheme
 import com.example.nemebudget.llm.ExtractedTransaction
 import com.example.nemebudget.llm.LlmPipeline
@@ -60,6 +64,7 @@ import com.example.nemebudget.ui.dashboard.DashboardScreen
 import com.example.nemebudget.ui.navigation.AppDestination
 import com.example.nemebudget.ui.navigation.bottomDestinations
 import com.example.nemebudget.ui.screens.BudgetsScreen
+import com.example.nemebudget.ui.screens.ResolveErrorScreen
 import com.example.nemebudget.ui.screens.SettingsScreen
 import com.example.nemebudget.ui.screens.TransactionsScreen
 import com.example.nemebudget.viewmodel.BudgetsViewModel
@@ -156,7 +161,7 @@ private fun MainApp() {
                 )
             }
             composable(AppDestination.Transactions.route) {
-                TransactionsScreen(viewModel = transactionsViewModel)
+                TransactionsScreen(viewModel = transactionsViewModel, navController = navController)
             }
             composable(AppDestination.Budgets.route) {
                 BudgetsScreen(viewModel = budgetsViewModel)
@@ -170,6 +175,35 @@ private fun MainApp() {
             }
             composable(AppDestination.Lab.route) {
                 LlmTestingScreen(pipeline = pipeline, modifier = Modifier.fillMaxSize())
+            }
+            composable(
+                route = AppDestination.ResolveError.route,
+                arguments = listOf(navArgument("errorId") { type = NavType.IntType })
+            ) { backStackEntry ->
+                val errorId = backStackEntry.arguments?.getInt("errorId") ?: return@composable
+                val rejectedItems by transactionsViewModel.rejectedNotifications.collectAsStateWithLifecycle()
+                val error = rejectedItems.find { it.id == errorId }
+                
+                if (error != null) {
+                    ResolveErrorScreen(
+                        error = error,
+                        onBack = { navController.popBackStack() },
+                        onDeleteError = {
+                            transactionsViewModel.deleteRejectedItem(errorId)
+                            navController.popBackStack()
+                        },
+                        onSaveAsTransaction = { merchant, amount, category ->
+                            transactionsViewModel.resolveRejectedAsTransaction(
+                                errorId = errorId,
+                                merchant = merchant,
+                                amount = amount,
+                                category = category,
+                                rawNotificationText = error.text
+                            )
+                            navController.popBackStack()
+                        }
+                    )
+                }
             }
         }
     }

@@ -89,6 +89,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
     var ruleInput by remember { mutableStateOf("") }
     var showWipeDialog by remember { mutableStateOf(false) }
     var showIgnoreAppsSubmenu by remember { mutableStateOf(false) }
+    var testNotificationTitle by remember { mutableStateOf("Debit Card Alert") }
     var testNotificationText by remember { mutableStateOf("You spent $45.99 at Starbucks") }
     val timeFormatter = remember { SimpleDateFormat("h:mm a", Locale.US) }
     val listenerEnabled = isNotificationListenerEnabled(context)
@@ -288,6 +289,17 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
 
         item {
             OutlinedTextField(
+                value = testNotificationTitle,
+                onValueChange = { testNotificationTitle = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Notification title") },
+                placeholder = { Text("Debit Card Alert") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+            )
+        }
+
+        item {
+            OutlinedTextField(
                 value = testNotificationText,
                 onValueChange = { testNotificationText = it },
                 modifier = Modifier.fillMaxWidth(),
@@ -300,7 +312,11 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
         item {
             Button(
                 onClick = {
-                    postTestNotification(context, testNotificationText)
+                    postTestNotification(
+                        context = context,
+                        notificationTitle = testNotificationTitle,
+                        notificationText = testNotificationText
+                    )
                 },
                 enabled = testNotificationText.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()
@@ -535,14 +551,18 @@ private fun loadInstalledLaunchableApps(packageManager: PackageManager): List<De
  * Posts a test notification that mimics a bank transaction notification.
  * This is used for debugging the BankNotificationListenerService encryption pipeline.
  */
-private fun postTestNotification(context: android.content.Context, notificationText: String) {
+private fun postTestNotification(
+    context: android.content.Context,
+    notificationTitle: String,
+    notificationText: String
+) {
     if (!isPostNotificationsGranted(context)) {
         Toast.makeText(context, "Grant Post Notifications first.", Toast.LENGTH_SHORT).show()
         return
     }
 
     val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-    
+
     // Create a notification channel for Android 8+
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
         val channel = android.app.NotificationChannel(
@@ -553,9 +573,11 @@ private fun postTestNotification(context: android.content.Context, notificationT
         notificationManager.createNotificationChannel(channel)
     }
 
+    val resolvedTitle = notificationTitle.ifBlank { "Debit Card Alert" }
+
     val notification = androidx.core.app.NotificationCompat.Builder(context, "test_bank_channel")
         .setSmallIcon(android.R.drawable.ic_dialog_info)
-        .setContentTitle("Transaction Alert")
+        .setContentTitle(resolvedTitle)
         .setContentText(notificationText)
         .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
         .setAutoCancel(true)
@@ -581,4 +603,3 @@ private fun isNotificationListenerEnabled(context: Context): Boolean {
         component?.packageName == context.packageName
     }
 }
-

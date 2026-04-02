@@ -1,6 +1,273 @@
+```markdown
 # Project Changelog (Neme Budget)
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
+
+## 2026-04-02 - AI Assistant (Fixed Navigation Crash: Added ResolveError Route + Import Cleanup)
+
+### What Changed
+* **Fixed critical crash** when user taps a rejected notification to open resolver screen:
+  - Added missing `ModalBottomSheet` import to `TransactionsScreen.kt` (was preventing build)
+  - Added missing `ResolveErrorScreen` import to `MainActivity.kt`
+  - **Added ResolveError navigation route** to `MainActivity.kt` NavHost with parameter extraction:
+    - Route: `resolve_error/{errorId}` with `NavArgument` of type `IntType`
+    - Extracts `errorId` from URL, finds matching `RejectedNotification` from ViewModel
+    - Wires all three callbacks to ViewModel methods: `deleteRejectedItem`, `resolveRejectedAsTransaction`
+    - Properly handles back navigation after resolver actions
+  - Added missing `collectAsStateWithLifecycle`, `navArgument`, `NavType` imports
+
+* **Added `IMPORT_ANALYSIS.md`** - Audit of unused imports across UI screens:
+  - Identified 4 confirmed unused imports in `TransactionsScreen.kt`
+  - Identified 2 unused imports in `ResolveErrorScreen.kt`
+  - Ready for cleanup with IDE "Optimize Imports" after validation
+
+### Why These Changes
+1. **Crash Root Cause**: App was trying to navigate to `resolve_error/41` but this route wasn't registered in the NavHost, causing `IllegalArgumentException` on tap
+2. **Teaching**: This demonstrates the importance of:
+   - **Contract definition** (AppDestination defines available routes)
+   - **Implementation** (route must be added as composable in NavHost)
+   - **Wiring** (callbacks must be connected to ViewModel methods)
+   - Any missing piece breaks the entire flow
+
+### Files Modified
+- `MainActivity.kt`: Added ResolveError route, fixed imports
+- `TransactionsScreen.kt`: Added ModalBottomSheet import, added @OptIn annotation
+- Created: `IMPORT_ANALYSIS.md`
+
+### Build Status
+✅ Build successful after all fixes
+
+---
+
+## 2026-04-01 - AI Assistant (Follow-Up Backlog Capture: Dashboard + Resolver + Navigation UX)
+
+### User-Requested Follow-Ups Captured (No Runtime Logic Change in This Entry)
+* Added explicit planning follow-ups for next implementation pass:
+  1) add month swiping gesture support in dashboard month navigation,
+  2) improve budget editing experience,
+  3) rework Error Resolver UX to show as "Errors detected, click here to address" and open a dedicated resolver screen,
+  4) downsize oversized add-transaction FAB bubble for tuning,
+  5) make dashboard safer/clearer with per-category safe-to-spend communication.
+
+### Why This Entry Exists
+* This entry records alignment after iterative UX changes so Dev2 planning and future implementation work stay synchronized with latest product direction.
+
+---
+
+## 2026-04-01 - AI Assistant (Error Resolver Flow + Fixed Bottom Actions + Larger Add FAB)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`:
+  * Removed transaction-row edit flow from this screen.
+  * Error rows now open a dedicated resolver sheet (`ResolveErrorBottomSheet`) instead of inline title/text/reason editing.
+  * Resolver sheet now shows raw notification content at the top and editable JSON-style fields at the bottom: `merchant`, `value` (amount), `category`.
+  * Resolver action controls are fixed at the bottom of the sheet for constant visibility: `Delete Error`, `Cancel`, `Save`.
+  * Increased add-transaction FAB bubble size and plus glyph size for better touch/accessibility.
+* Updated conversion behavior from error -> transaction:
+  * Added `resolveRejectedAsTransaction(...)` in `app/src/main/java/com/example/nemebudget/viewmodel/TransactionsViewModel.kt`.
+  * Save from resolver now creates a transaction from edited fields and deletes the source error row.
+
+### Why This Was Done
+* Align UI with request to edit extraction fields (JSON-style output fields) rather than editing normal transaction rows.
+* Keep destructive/primary actions visible at all times in long sheets.
+* Improve plus action discoverability and ergonomics with a larger floating action button.
+
+---
+
+## 2026-04-01 - AI Assistant (Transactions UX Polish: Confirm Delete + Bigger FAB + Editable Errors)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`:
+  * Added delete confirmation dialog before removing a transaction row.
+  * Enlarged the add-transaction floating `+` button (larger bubble + larger plus text).
+  * Error rows now support both **Edit** and **Delete** actions.
+  * Added `EditErrorBottomSheet` to edit error title/text/reason fields.
+  * Manual transaction category picker changed from dropdown to explicit category chips in the add sheet to avoid being stuck on `Other`.
+* Updated data contract and persistence for error editing:
+  * `app/src/main/java/com/example/nemebudget/repository/AppRepository.kt` adds `updateRejectedNotification(...)`.
+  * `app/src/main/java/com/example/nemebudget/db/RawNotificationDao.kt` adds `updateRejectedNotification(...)` SQL update query.
+  * `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt` and `app/src/main/java/com/example/nemebudget/repository/FakeRepository.kt` implement update behavior.
+  * `app/src/main/java/com/example/nemebudget/viewmodel/TransactionsViewModel.kt` adds `updateRejectedItem(...)`.
+
+### Why This Was Done
+* Prevent accidental transaction deletion via confirmation.
+* Improve primary add action discoverability and touch ergonomics.
+* Make error records actionable by allowing correction as well as deletion.
+* Fix manual transaction categorization UX so all categories are directly selectable.
+
+---
+
+## 2026-04-01 - AI Assistant (Transactions UX: Errors-Only Section + Floating Add Button)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`.
+  * Removed the manual rejected-entry add form from the Transactions UI.
+  * Renamed the rejected area label from `Rejected Notifications` to `Errors`.
+  * Entire `Errors` section is now hidden when there are no error rows.
+  * Added a floating `+` action button anchored to the bottom-right of the screen.
+  * Manual transaction creation now opens a dedicated bottom sheet (`AddTransactionBottomSheet`) from the FAB.
+
+### Why This Was Done
+* Aligns with product intent: error list is for failed extractions, not manual entry.
+* Keeps the primary transaction-history screen cleaner and reduces visual clutter.
+* Provides a more standard mobile UX for manual transaction entry using a floating primary action.
+
+---
+
+## 2026-04-01 - AI Assistant (Rejected Visibility + General Transaction Add/Delete Controls)
+
+### What Changed
+* Updated repository contract `app/src/main/java/com/example/nemebudget/repository/AppRepository.kt`:
+  * Added `addTransaction(transaction)` and `deleteTransaction(id)` for direct main-table management.
+* Implemented new contract methods in:
+  * `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt` (Room-backed insert/delete),
+  * `app/src/main/java/com/example/nemebudget/repository/FakeRepository.kt` (in-memory parity).
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/TransactionsViewModel.kt`:
+  * Added `addManualTransaction(...)` and `deleteTransaction(id)` actions.
+
+### Transactions Screen Behavior Updates
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`:
+  * Rejected section now **shows failed notifications first** with empty-state guidance when there are none.
+  * Manual rejected-entry form is now optional (toggle), not the default focus.
+  * Added a new **Manual Transaction** form (toggle) to insert rows into the real transactions table.
+  * Added per-row **Delete** action on transaction rows.
+
+### Why This Was Done
+* User feedback indicated rejected UX looked like an add-form only, which obscured the actual failed-item review purpose.
+* Added direct add/delete controls so table management works "in general" from one screen.
+* Keeps failed-notification observability while improving day-to-day transaction maintenance.
+
+---
+
+## 2026-04-01 - AI Assistant (Transactions History Visibility Fix)
+
+### Problem
+* Transaction history appeared to disappear after rejected-items tools were added to `TransactionsScreen`.
+* Root cause was UI layout pressure: the new rejected section consumed vertical space, making the main history list effectively non-visible on some screens.
+
+### Fix Applied
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`:
+  * Rejected tools panel is now hidden by default and toggled with Show/Hide.
+  * Main transactions list now uses `Modifier.weight(1f)` so it always gets remaining viewport space.
+  * Rejected list remains height-capped (`140.dp`) to avoid pushing out primary content when expanded.
+
+### Why This Works
+* `weight(1f)` enforces a stable layout contract for the primary transaction list.
+* Collapsing optional controls prevents secondary tooling from dominating core UX.
+* Keeps rejected-item workflow available without sacrificing transaction-history visibility.
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt` processing rules:
+  * Added hard rejection for invalid extraction outputs before transaction insert:
+    * merchant is `Error`,
+    * merchant is `Unknown`/blank,
+    * amount `<= 0`.
+  * Rejections are persisted through `raw_notifications.errorMessage` via `markAsFailed(...)` (not inserted into `transactions`).
+* Added user-visible notification when merchant is explicitly `Error`:
+  * Channel: `nemebudget_rejections`
+  * Notification title: `Transaction Rejected`
+  * Includes notification text and rejection reason.
+* Added rejected-item repository APIs in `app/src/main/java/com/example/nemebudget/repository/AppRepository.kt` and implementations in:
+  * `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt`
+  * `app/src/main/java/com/example/nemebudget/repository/FakeRepository.kt`
+* Added rejected-item DAO support in `app/src/main/java/com/example/nemebudget/db/RawNotificationDao.kt`:
+  * `getRejectedNotifications()`
+  * `deleteById(id)`
+* Added rejected item model in `app/src/main/java/com/example/nemebudget/model/SharedModels.kt`:
+  * `RejectedNotification`
+* Added rejected-items UI controls in Transactions:
+  * `app/src/main/java/com/example/nemebudget/viewmodel/TransactionsViewModel.kt` now exposes rejected flow and add/delete actions.
+  * `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt` now includes:
+    * rejected table view,
+    * manual add form (title/text/reason),
+    * per-row delete action.
+* Aligned fallback batch path in `app/src/main/java/com/example/nemebudget/pipeline/NotificationBatchProcessor.kt` to reject `Error`/`Unknown`/`amount<=0` outputs as well.
+
+### Why This Was Done
+* Prevent placeholder LLM outputs (`Error`, `0.0`) from being counted as successful transactions.
+* Keep extraction failures visible and auditable inside app UX instead of silently losing context.
+* Give the user manual control over rejected entries for review/cleanup from the Transactions tab.
+
+---
+
+## 2026-03-31 - AI Assistant (Test Notification Title Is Now Editable)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/SettingsScreen.kt` test generator UI:
+  * Added new `OutlinedTextField` for `Notification title`.
+  * Kept existing text field for notification body.
+* Updated `postTestNotification(...)` signature to accept both `notificationTitle` and `notificationText`.
+* Replaced hardcoded `.setContentTitle("Transaction Alert")` with user-provided title.
+* Added safe fallback title `"Debit Card Alert"` when the title field is blank.
+
+### Why This Was Done
+* Hardcoding `"Transaction Alert"` made all test notifications share the same high-signal title, which biased filtering behavior and made testing less realistic.
+* Allowing editable titles helps test edge cases (false positives/negatives) and better simulates real bank/provider formats.
+
+### Behavior Notes
+* The button still requires non-blank notification text.
+* Title can be edited freely; blank titles are normalized to `"Debit Card Alert"` before posting.
+
+---
+
+## 2026-03-31 - AI Assistant (Scan-Time Transaction Gate + Shared Filter Policy)
+
+### What Changed
+* Added shared policy object `app/src/main/java/com/example/nemebudget/pipeline/TransactionalNotificationGate.kt`.
+  * Centralizes deterministic pre-LLM rules and returns reason-coded decisions.
+* Updated `app/src/main/java/com/example/nemebudget/notifications/BankNotificationListenerService.kt`.
+  * Listener now runs the strict gate **before** `saveToEncryptedVault(...)`.
+  * Non-transaction notifications are rejected at scan-time and are not inserted into encrypted `raw_notifications`.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt`.
+  * Replaced local duplicate gate logic with the shared gate to prevent drift.
+* Added unit tests in `app/src/test/java/com/example/nemebudget/TransactionalNotificationGateTest.kt`.
+  * Covers pass path, no-money rejection, and conversational-money false-positive rejection.
+
+### Why This Was Done
+* The strict filter previously ran mainly at processing time, so noisy notifications still polluted the raw queue.
+* Moving the gate to scan-time enforces boundary validation earlier (ingest hygiene) and reduces wasted LLM calls.
+* Sharing one gate between listener and repository prevents behavior mismatch over time.
+
+### Technical Details
+* Gate requires:
+  1) money signal,
+  2) transaction action signal,
+  3) conversational/email marker only allowed when bank context is present.
+* Listener now logs skip reasons (for example `no_money_signal`, `conversation_or_email_without_bank_context`) to aid tuning.
+
+---
+
+## 2026-03-31 - AI Assistant (Pre-LLM Gate Hardening in RealRepository)
+
+### Problem Observed
+* Non-transaction notifications (for example conversational/email-like text) were still reaching `LlmPipeline.extractWithRetry(...)`.
+* This caused placeholder JSON attempts like `{"merchant":"Merchant","amount":0,"category":"Other"}` and unnecessary retries.
+
+### Root Cause
+* The active batch path used by Settings (`SettingsViewModel -> AppRepository.processPendingNotifications -> RealRepository`) had no mandatory pre-LLM transactional gate.
+* A final gate existed in `NotificationBatchProcessor`, but this code path was not the primary one used for manual processing.
+
+### Changes Applied
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt`:
+  * Added `evaluateTransactionalGate(title, text)` and `GateDecision`.
+  * Added strict preconditions before calling the LLM:
+    1) money signal regex must match,
+    2) transaction action keyword must exist,
+    3) if content looks conversational/email-like, bank context must also be present.
+  * Added reason-coded skip logs (for example: `no_money_signal`, `no_transaction_action_signal`, `conversation_or_email_without_bank_context`).
+  * Notifications that fail the gate are marked processed and skipped before inference to reduce wasted compute and hallucination risk.
+
+### Technical Notes
+* Money regex supports both prefix and suffix currency patterns (`$45`, `45$`, `USD 45`, `45 dollars`).
+* Action words include debit/credit/payment/transfer/refund/deposit signals.
+* Conversational markers are intentionally lightweight and only block when bank context is absent, to reduce false positives while protecting valid bank alerts.
+
+### Why This Helps
+* Prevents obvious non-financial content from consuming LLM tokens and latency budget.
+* Improves extraction precision by only invoking LLM on likely transactional candidates.
+* Gives fast debugging signal through explicit skip reasons in Logcat.
+
+---
 
 ## 2026-03-30 - AI Assistant (Rollback: Remove Persisted Transaction Type + Reliability/Perf Pass)
 
@@ -562,3 +829,5 @@ This enables end-to-end encryption pipeline testing without needing real bank no
 * Result: **BUILD SUCCESSFUL**.
 
 ---
+
+
