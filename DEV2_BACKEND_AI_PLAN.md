@@ -7,14 +7,19 @@
 > 3) [ ] Reduce frame drops during shader warmup and batch notification processing.
 > 4) [ ] Replace indeterminate processing spinner with per-notification determinate progress bar.
 > 5) [ ] Tune batch throughput (start with size 10) and verify transaction history/count updates correctly.
+> 6) [ ] Reintroduce `isAiParsed` UI indicator later as a subtle star marker (not in the cramped action row).
 
 > **New Follow-Up Queue (Added 2026-04-01):**
 > 1) [ ] **Dashboard month swipe navigation**
 >    - Add horizontal swipe gesture to change month in dashboard (parity with arrow buttons).
 >    - Acceptance: swipe left/right updates month label + data consistently with button behavior.
-> 2) [ ] **Better budget editing UX**
+> 2) [/] **Better budget editing UX**
 >    - Improve budget limit editing flow (discoverability, validation, and save feedback).
 >    - Acceptance: user can edit category budget limits without confusing state and with clear confirmation.
+>    - Status update (2026-04-02): inline tap-to-edit limit + validation + save feedback shipped; persistent category limit overrides now stored in app settings for both real/fake repositories.
+>    - Status update (2026-04-02, phase 2): custom budget category creation shipped (label + emoji + initial limit) and long-press label/icon editor shipped for both built-in and custom categories.
+>    - Status update (2026-04-02, phase 3): category labels now enforce a 50-character cap and allowed-character filtering so custom categories stay list-friendly.
+>    - Remaining for full completion: optional polish for icon picker UX and propagation of custom category aliases into future LLM validation/rule-mapping flows.
 > 3) [ ] **Error resolver UX redesign + missing editing features**
 >    - Replace inline sheet trigger with compact banner/row: `Errors detected - click here to address`.
 >    - Open dedicated error-resolution screen (not the same swipe-up creator style as transaction add).

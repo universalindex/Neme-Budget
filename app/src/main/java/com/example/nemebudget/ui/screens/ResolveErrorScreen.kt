@@ -42,7 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.RejectedNotification
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -72,11 +72,12 @@ fun ResolveErrorScreen(
     error: RejectedNotification,
     onBack: () -> Unit,
     onDeleteError: () -> Unit,
-    onSaveAsTransaction: (merchant: String, amount: Double, category: Category) -> Unit
+    categoryOptions: List<CategoryDefinition>,
+    onSaveAsTransaction: (merchant: String, amount: Double, category: CategoryDefinition) -> Unit
 ) {
     var merchant by remember(error.id) { mutableStateOf("") }
     var amountInput by remember(error.id) { mutableStateOf("") }
-    var selectedCategory by remember(error.id) { mutableStateOf(Category.OTHER) }
+    var selectedCategory by remember(error.id) { mutableStateOf(categoryOptions.firstOrNull { it.label == "Other" } ?: categoryOptions.first()) }
 
     val dateFormatter = remember { SimpleDateFormat("MMM d, yyyy h:mm a", Locale.US) }
 
@@ -176,7 +177,7 @@ fun ResolveErrorScreen(
 
                 Text("Category", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(Category.entries) { category ->
+                    items(categoryOptions) { category ->
                         AssistChip(
                             onClick = { selectedCategory = category },
                             label = { Text(category.label) },

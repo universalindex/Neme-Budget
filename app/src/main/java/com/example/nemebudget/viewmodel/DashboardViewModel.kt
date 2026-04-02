@@ -2,7 +2,7 @@ package com.example.nemebudget.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.repository.AppRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,7 +72,7 @@ class DashboardViewModel(private val repo: AppRepository) : ViewModel() {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val spendingByCategory: StateFlow<Map<Category, Double>> = transactions
+    val spendingByCategory: StateFlow<Map<CategoryDefinition, Double>> = transactions
         .map { list -> list.groupBy { it.category }.mapValues { (_, txns) -> txns.sumOf { it.amount } } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 

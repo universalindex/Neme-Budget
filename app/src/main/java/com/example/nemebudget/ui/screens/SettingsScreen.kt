@@ -348,27 +348,48 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
 
         item {
             val isRunning = processingState is ProcessingState.Processing
+            val buttonLabel = when (val state = processingState) {
+                is ProcessingState.Processing -> "Processing ${state.processedCount}/${state.totalCount}"
+                else -> "Process Now"
+            }
             Button(onClick = viewModel::processNow, enabled = !isRunning) {
-                if (isRunning) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.size(8.dp))
-                }
-                Text(if (isRunning) "Processing..." else "Process Now")
+                Text(buttonLabel)
             }
         }
 
         item {
-            val processingLabel = when (val state = processingState) {
-                is ProcessingState.Idle -> ""
-                is ProcessingState.Processing -> "Processing ${state.pendingCount} new notifications..."
-                is ProcessingState.Success -> "Last processed ${timeFormatter.format(Date(state.completedAtMillis))}"
-                is ProcessingState.Error -> "Processing failed: ${state.message}"
-            }
-            if (processingLabel.isNotBlank()) {
-                Text(processingLabel, style = MaterialTheme.typography.bodyMedium)
+            when (val state = processingState) {
+                is ProcessingState.Processing -> {
+                    val progress = if (state.totalCount <= 0) 0f else state.processedCount.toFloat() / state.totalCount.toFloat()
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                        Text(
+                            text = "Processing ${state.processedCount} of ${state.totalCount}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        state.currentItemLabel?.takeIf { it.isNotBlank() }?.let { current ->
+                            Text(
+                                text = "Current: $current",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                is ProcessingState.Success -> {
+                    Text(
+                        "Last processed ${timeFormatter.format(Date(state.completedAtMillis))}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                is ProcessingState.Error -> {
+                    Text(
+                        "Processing failed: ${state.message}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                ProcessingState.Idle -> Unit
             }
         }
 

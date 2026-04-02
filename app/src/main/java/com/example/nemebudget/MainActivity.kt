@@ -53,6 +53,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.NavType
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import com.example.nemebudget.ui.theme.NemeBudgetTheme
 import com.example.nemebudget.llm.ExtractedTransaction
 import com.example.nemebudget.llm.LlmPipeline
@@ -107,7 +108,18 @@ private fun MainApp() {
     val transactionsViewModel = remember { TransactionsViewModel(repo) }
     val budgetsViewModel = remember { BudgetsViewModel(repo) }
     val settingsViewModel = remember { SettingsViewModel(repo) }
+    val transactionCategoryOptions by transactionsViewModel.categoryOptions.collectAsStateWithLifecycle()
     val modelStatus by settingsViewModel.modelStatus.collectAsStateWithLifecycle()
+
+    fun navigateToTopLevel(route: String) {
+        navController.navigate(route) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
 
     val onboardingPrefs = context.applicationContext.getSharedPreferences(APP_PREFS_NAME, Context.MODE_PRIVATE)
     var onboardingCompleted by remember(context) {
@@ -148,15 +160,7 @@ private fun MainApp() {
                         val selected = currentRoute == destination.route
                         NavigationBarItem(
                             selected = selected,
-                            onClick = {
-                                navController.navigate(destination.route) {
-                                    popUpTo(navController.graph.startDestinationId) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
+                            onClick = { navigateToTopLevel(destination.route) },
                             icon = {
                                 androidx.compose.material3.Icon(
                                     imageVector = destination.icon,
@@ -178,7 +182,7 @@ private fun MainApp() {
             composable(AppDestination.Dashboard.route) {
                 DashboardScreen(
                     viewModel = dashboardViewModel,
-                    onSeeAllTransactions = { navController.navigate(AppDestination.Transactions.route) }
+                    onSeeAllTransactions = { navigateToTopLevel(AppDestination.Transactions.route) }
                 )
             }
             composable(AppDestination.Transactions.route) {
@@ -208,6 +212,7 @@ private fun MainApp() {
                 if (error != null) {
                     ResolveErrorScreen(
                         error = error,
+                        categoryOptions = transactionCategoryOptions,
                         onBack = { navController.popBackStack() },
                         onDeleteError = {
                             transactionsViewModel.deleteRejectedItem(errorId)

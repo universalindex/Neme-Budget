@@ -3,6 +3,233 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-04-02 - AI Assistant (Built-In Category Presentation Overrides Now Propagate to Transaction UI)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/model/SharedModels.kt`:
+  * `AppSettings.transactionCategoryOptions()` now applies `categoryPresentation` overrides when building the transaction category list.
+  * Previously, this helper was returning the hardcoded enum labels/emoji, so edits to built-in categories (like "Dining" → custom emoji) were invisible in the transactions screen, making it appear that edits didn't save.
+
+### Why This Was Done
+1. When you edit a built-in category's label/emoji, the change is stored in `categoryPresentation` and used correctly by the budgets screen.
+2. But the transactions screen builds its category picker from `transactionCategoryOptions()`, which was ignoring those overrides.
+3. Now the transactions screen, dashboard filters, error resolver, and LLM validation all see the same live presentation data.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after the fix.
+
+## 2026-04-02 - AI Assistant (Live Category Icon Resolution for Transaction Screens)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/db/TransactionEntity.kt`:
+  * Added a settings-aware `toDomain(settings)` mapper so transaction rows can resolve the latest category label/icon from the saved catalog.
+  * Kept the stored `categoryId`/`categoryLabel`/`categoryEmoji` snapshot for history and fallback safety.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt`:
+  * `getAllTransactions()` and `getTransactionsByDateRange()` now combine the transaction table with `settingsFlow`, so built-in category icon edits and custom category icon edits immediately show up in transaction-based screens.
+  * CSV export now uses the live category resolution too.
+* Updated `app/src/main/java/com/example/nemebudget/repository/FakeRepository.kt`:
+  * Mirrors the live-resolution behavior so the demo/test repository stays visually consistent with production.
+
+### Why This Was Done
+1. Category metadata is stored as editable settings, but transaction rows intentionally keep a snapshot for audit/history.
+2. The UI should show the user’s current category icon everywhere, not just on the budgets screen that edits the catalog.
+3. Resolving the display metadata at read time preserves history while fixing the “edited icon only updates some screens” mismatch.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after the repository/model changes.
+
+## 2026-04-02 - AI Assistant (Full Category Catalog Migration: Custom Categories Become the Live Source of Truth)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/model/SharedModels.kt`:
+  * `Transaction.category` now uses `CategoryDefinition` instead of the hardcoded enum directly.
+  * Added helper models/functions to build a live category catalog from built-in + custom categories.
+* Updated `app/src/main/java/com/example/nemebudget/db/TransactionEntity.kt`:
+  * Added `categoryId` and `categoryEmoji` columns to preserve stable category identity and display snapshots.
+  * Mappers now round-trip `CategoryDefinition` rather than enum-only labels.
+* Updated `app/src/main/java/com/example/nemebudget/db/AppDatabase.kt`:
+  * Added `MIGRATION_3_4` to backfill the new category columns for existing installs.
+  * Incremented Room database version so the new schema is applied on open.
+* Updated `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt`:
+  * LLM schema + verification now rebuild from the saved category catalog in `app_settings_json`.
+  * Custom categories are now valid LLM outputs, not just built-in enum entries.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt` and `FakeRepository.kt`:
+  * Transaction processing now resolves categories from the live catalog.
+  * Budgets and CSV export use category definitions/labels consistently.
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/TransactionsViewModel.kt`, `DashboardViewModel.kt`, `TransactionsScreen.kt`, `ResolveErrorScreen.kt`, and `DashboardScreen.kt`:
+  * Category pickers, filters, and chart labels now consume the live catalog instead of `Category.entries`.
+
+### Why This Was Done
+1. This removes the last major assumption that the built-in enum was the only valid category system.
+2. Custom categories now participate in transaction entry, resolution, dashboard analytics, and LLM output validation.
+3. The migration keeps legacy data readable by preserving stable category IDs and label/emoji snapshots in the transaction rows.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after the migration.
+
+## 2026-04-02 - AI Assistant (DEV2 Item 3 Phase 2: Custom Budget Categories + Long-Press Label/Icon Editor)
+
+### What Changed
+* Updated budget/category contracts in `app/src/main/java/com/example/nemebudget/model/SharedModels.kt`:
+  * `Budget` now carries stable `id`, display `label`, display `emoji`, nullable enum backing `category`, and `isCustom`.
+  * Added `CategoryPresentation` for editable built-in label/icon overrides.
+  * Added `CustomBudgetCategory` for fully user-created budget categories.
+  * Extended `AppSettings` with `categoryPresentation` and `customBudgetCategories`.
+* Updated repository contract in `app/src/main/java/com/example/nemebudget/repository/AppRepository.kt`:
+  * Added APIs for custom category create/update/delete metadata flows.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt`:
+  * `getBudgets()` now emits both built-in enum budgets and custom budget categories.
+  * Built-in category labels/icons now resolve from user overrides when present.
+  * Added persistence for `categoryPresentation` and `customBudgetCategories` inside existing settings JSON.
+  * Added methods: `addCustomBudgetCategory`, `updateBudgetCategoryMeta`, `deleteCustomBudgetCategory`.
+* Updated `app/src/main/java/com/example/nemebudget/repository/FakeRepository.kt`:
+  * Mirrors new behavior for built-in label/icon overrides + custom budget categories.
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/BudgetsViewModel.kt`:
+  * Added wrappers for custom category create/update/delete actions.
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/BudgetsScreen.kt`:
+  * FAB now opens `Add custom category` dialog (label + emoji + initial limit).
+  * Long-press now opens category action menu with label/icon editing and delete/reset actions.
+  * Added category metadata editor dialog (`label` + `emoji`).
+  * Category labels now enforce a 50-character cap and allowed-character filtering so custom names stay list-friendly.
+  * Kept inline limit editing but now keyed by stable budget `id` to support both built-in and custom rows.
+
+### Why This Was Done
+1. Budget customization needed to decouple category display metadata from enum-only labels without destabilizing transaction parsing.
+2. Long-press is now the dedicated “category management” affordance while tap remains quick limit editing.
+3. This phase unlocks custom budgeting categories immediately while preserving existing transaction/LLM enum behavior.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after all model, repository, and UI changes.
+
+## 2026-04-02 - AI Assistant (SQLCipher mlock Warning Mitigation)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/db/AppDatabase.kt`.
+* Added a Room database `onOpen` callback for SQLCipher runtime pragmas.
+* On open, the DB now executes:
+  * `PRAGMA cipher_memory_security = OFF`
+
+### Why This Was Done
+1. Runtime logs were repeatedly showing `sqlcipher_mlock: mlock() returned -1 errno=12` during keying/open operations.
+2. Those messages are typically non-fatal on Android devices with low/strict memlock limits, but they create noisy logs and can correlate with extra overhead around DB open paths.
+3. This mitigation keeps at-rest SQLCipher encryption intact while disabling the memory-page locking feature that triggers the warnings on constrained devices.
+
+### Security/Tradeoff Note
+* This reduces SQLCipher in-memory hardening (`mlock` protections) in exchange for quieter and more stable behavior on affected devices.
+* Disk encryption and passphrase-based keying remain unchanged.
+
+## 2026-04-02 - AI Assistant (DEV2 Item 3 Phase 1: Inline Budget Editing + Persistent Limits)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/model/SharedModels.kt`:
+  * Extended `AppSettings` with `budgetLimits: Map<Category, Double>` so user-edited budget caps have a real contract-backed storage field.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt`:
+  * Added persisted settings serialization/deserialization in shared preferences key `app_settings_json`.
+  * Switched settings handling to reactive `settingsFlow` so budget-limit changes immediately recompute budget UI state.
+  * Updated `getBudgets()` to combine transactions with saved limit overrides instead of using a fixed hardcoded limit.
+  * Implemented all `AppRepository` contract methods in this file (`getModelStatus`, `markGpuOptimized`, `getTotalTransactionCount`, `wipeAllData`, `exportToCsv`) so the repository compiles cleanly and remains complete.
+  * Restored rejected-extraction user notifications with API-level and permission-safe checks.
+* Updated `app/src/main/java/com/example/nemebudget/repository/FakeRepository.kt`:
+  * Budget edits now write to `settingsFlow.budgetLimits` and regenerate budget cards with overrides for parity with real data behavior.
+  * Budget recalculation after transaction add/update/delete now respects saved limit overrides.
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/BudgetsScreen.kt`:
+  * Added inline budget-limit editing directly on budget cards (tap card -> amount becomes editable).
+  * Added inline validation (`> 0` numeric), save/cancel controls, and a save confirmation snackbar.
+  * Kept long-press actions for management flow while steering primary edit behavior to direct inline editing.
+
+### Why This Was Done
+1. Budget edits previously looked editable in UI but did not persist in the real repository path, which breaks user trust.
+2. Inline amount editing is the fastest path for the common action (change budget cap), while long-press remains available for less frequent actions.
+3. Combining transaction flow + settings flow ensures edited limits immediately reflect in the rendered budget cards without app restarts.
+4. Completing the repository interface methods in `RealRepository` avoids contract drift and compile instability.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after the changes.
+
+## 2026-04-02 - AI Assistant (Dashboard 'See All' Navigation Now Uses Top-Level Tab Pattern)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/MainActivity.kt`.
+* Added a small `navigateToTopLevel(...)` helper so top-level destinations all use the same `popUpTo(...)/launchSingleTop/restoreState` behavior.
+* Switched the dashboard `See All` action to use that helper when opening `Transactions`.
+
+### Why This Was Done
+1. Bottom tabs work best when every top-level destination uses the same navigation contract.
+2. Reusing the bottom-bar pattern for `See All` keeps the back stack predictable and avoids odd cases where the user must rely on system back instead of the tab bar.
+3. This is a minimal, low-risk fix: no UI redesign, just a route-consistency improvement.
+
+## 2026-04-02 - AI Assistant (DEV2 Item 2 Refinement: Dashboard Swipe Works Across Whole Dashboard)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/dashboard/DashboardScreen.kt` again.
+* Moved the horizontal swipe detector from the month header row to the full dashboard `LazyColumn` container.
+* Month swipes now work anywhere on the dashboard screen, while still using the same `previousMonth()` / `nextMonth()` logic as the arrow buttons.
+
+### Why This Was Done
+1. The month header-only gesture area was too narrow in practice.
+2. Expanding the gesture surface makes the feature easier to discover and use.
+3. The dashboard already distinguishes horizontal swipes from vertical scrolling, so broadening the hit area is low risk.
+
+### Behavior Notes
+* Vertical list scrolling remains the primary interaction; horizontal swipes are only meant for intentional month changes.
+* Arrow buttons still work exactly as before.
+
+## 2026-04-02 - AI Assistant (DEV2 Item 2: Dashboard Month Swipe Navigation)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/dashboard/DashboardScreen.kt`.
+* Added horizontal swipe handling to the month selector row.
+* Swipe left now calls the same month advance path as the next-arrow button.
+* Swipe right now calls the same month back path as the previous-arrow button.
+* Kept the existing arrow buttons unchanged so both input methods share the same `DashboardViewModel` month state.
+
+### Why This Was Done
+1. Month navigation already had the correct state logic; the missing piece was gesture parity.
+2. Reusing `previousMonth()` and `nextMonth()` avoids duplicated month math and keeps swipes/buttons perfectly aligned.
+3. Limiting the gesture to the month selector row reduces conflict with the dashboard's vertical scrolling content.
+
+### Behavior Notes
+* The dashboard still derives all monthly data from the single `selectedMonth` state.
+* Swipe gestures and arrow taps now both drive the same underlying month selection transitions.
+
+## 2026-04-02 - AI Assistant (DEV2 Step 1: Determinate Processing Progress)
+
+### What Changed
+* Updated processing state contract in `app/src/main/java/com/example/nemebudget/model/SharedModels.kt`:
+  * `ProcessingState.Processing` now carries `processedCount`, `totalCount`, and optional `currentItemLabel`.
+* Updated repository contract in `app/src/main/java/com/example/nemebudget/repository/AppRepository.kt`:
+  * `processPendingNotifications(...)` now accepts an optional progress callback.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt`:
+  * Emits callback progress per completed raw notification during batch processing.
+* Updated `app/src/main/java/com/example/nemebudget/repository/FakeRepository.kt`:
+  * Emits callback progress in both mock and processor-backed paths for UI parity.
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/SettingsViewModel.kt`:
+  * Wires repository callback into `ProcessingState.Processing` updates.
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/SettingsScreen.kt`:
+  * Replaced indeterminate process button spinner with determinate progress text + `LinearProgressIndicator`.
+  * Shows `Processing X of Y` and current item label while running.
+
+### Why This Was Done
+1. Spinner-only feedback told users work was happening, but not how far along the batch was.
+2. Determinate progress improves transparency and makes long processing runs easier to trust/debug.
+3. Callback-based updates keep architecture clean (repository owns work, ViewModel owns state, UI only renders).
+
+## 2026-04-02 - AI Assistant (Small UX Rollback: Explicit Edit Button, No Row-Wide Tap)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`.
+* Removed row-wide tap-to-edit behavior from `TransactionRow(...)` by dropping the `Modifier.clickable(...)` usage.
+* Added an explicit `Edit` text button in the trailing action area next to `Delete`.
+
+### Why This Was Done
+1. Broad row tap targets can cause accidental edits and hide available actions.
+2. Explicit action buttons are easier to learn and safer to use in dense list rows.
+3. This keeps scope intentionally small (interaction affordance only), matching requested low-risk rollback style.
+
+### Follow-Up Note Added
+* Added deferred DEV2 backlog item in `DEV2_BACKEND_AI_PLAN.md`:
+  * Reintroduce `isAiParsed` as a subtle star marker later (without crowding the row action area).
+
 ## 2026-04-02 - AI Assistant (Onboarding Flow Rewired Back Into Startup)
 
 ### What Changed
@@ -451,7 +678,7 @@ This file tracks significant changes and progress for the Neme Budget app. Pleas
     3. If verified, create Transaction and insert to database
     4. Mark raw notification as processed
     5. Return count of successful transactions created
-* Handles error states: if LLM fails, mark row as failed (not skipped) to preserve audit trail
+  - Handles error states: if LLM fails, mark row as failed (not skipped) to preserve audit trail
 
 #### 6. **Database Schema Version Bump**
 * Updated `AppDatabase` to version 2 (from version 1) to accommodate:
@@ -856,5 +1083,4 @@ This enables end-to-end encryption pipeline testing without needing real bank no
 * Result: **BUILD SUCCESSFUL**.
 
 ---
-
 

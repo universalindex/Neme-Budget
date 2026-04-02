@@ -1,6 +1,5 @@
 package com.example.nemebudget.ui.screens
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,7 +49,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
-import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.viewmodel.TransactionsViewModel
@@ -64,6 +63,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
     val rejectedItems by viewModel.rejectedNotifications.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
     val selected by viewModel.filter.collectAsStateWithLifecycle()
+    val categoryOptions by viewModel.categoryOptions.collectAsStateWithLifecycle()
     val sectionFormatter = remember { SimpleDateFormat("MMMM d, yyyy", Locale.US) }
     val dateFormatter = remember { SimpleDateFormat("MMM d", Locale.US) }
     val groupedTransactions = remember(transactions) {
@@ -103,12 +103,12 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
                         )
                     )
                 }
-                itemsIndexed(Category.entries) { _, category ->
+                itemsIndexed(categoryOptions) { _, category ->
                     AssistChip(
                         onClick = { viewModel.onFilterChanged(category) },
                         label = { Text(category.label) },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = if (selected == category) {
+                            containerColor = if (selected?.id == category.id) {
                                 MaterialTheme.colorScheme.primaryContainer
                             } else {
                                 MaterialTheme.colorScheme.surface
@@ -179,6 +179,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
     }
     if (showAddTransactionSheet) {
         AddTransactionBottomSheet(
+            categoryOptions = categoryOptions,
             onDismiss = { showAddTransactionSheet = false },
             onSave = { merchant, amount, category ->
                 viewModel.addManualTransaction(merchant, amount, category)
@@ -189,6 +190,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
     editingTransaction?.let { original ->
         EditTransactionBottomSheet(
             original = original,
+            categoryOptions = categoryOptions,
             onDismiss = { editingTransaction = null },
             onDelete = {
                 viewModel.deleteTransaction(original.id)
@@ -260,7 +262,6 @@ private fun TransactionRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onEdit)
     ) {
         Row(
             modifier = Modifier
@@ -299,10 +300,8 @@ private fun TransactionRow(
                     color = MaterialTheme.colorScheme.error,
                     fontWeight = FontWeight.SemiBold
                 )
-                if (transaction.isAiParsed) {
-                    Spacer(Modifier.width(6.dp))
-                    Text("?")
-                }
+                Spacer(Modifier.width(6.dp))
+                TextButton(onClick = { onEdit() }) { Text("Edit") }
                 Spacer(Modifier.width(6.dp))
                 TextButton(onClick = { onDelete() }) { Text("Delete") }
             }
@@ -322,9 +321,10 @@ private fun TransactionRow(
 @OptIn(ExperimentalMaterial3Api::class)
 private fun EditTransactionBottomSheet(
     original: Transaction,
+    categoryOptions: List<CategoryDefinition>,
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
-    onSave: (merchant: String, amount: Double, category: Category) -> Unit
+    onSave: (merchant: String, amount: Double, category: CategoryDefinition) -> Unit
 ) {
     var merchant by remember(original.id) { mutableStateOf(original.merchant) }
     var amountInput by remember(original.id) { mutableStateOf(String.format(Locale.US, "%.2f", original.amount)) }
@@ -357,7 +357,7 @@ private fun EditTransactionBottomSheet(
                 Text(selectedCategory.label)
             }
             DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                Category.entries.forEach { category ->
+                categoryOptions.forEach { category ->
                     DropdownMenuItem(
                         text = { Text(category.label) },
                         onClick = {
@@ -398,13 +398,15 @@ private fun EditTransactionBottomSheet(
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 private fun AddTransactionBottomSheet(
+    categoryOptions: List<CategoryDefinition>,
     onDismiss: () -> Unit,
-    onSave: (merchant: String, amount: Double, category: Category) -> Unit
+    onSave: (merchant: String, amount: Double, category: CategoryDefinition) -> Unit
 ) {
     var merchant by remember { mutableStateOf("") }
     var amountInput by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf(Category.OTHER) }
+    var selectedCategory by remember { mutableStateOf(categoryOptions.firstOrNull { it.label == "Other" } ?: categoryOptions.first()) }
     var menuExpanded by remember { mutableStateOf(false) }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -432,7 +434,7 @@ private fun AddTransactionBottomSheet(
                 Text(selectedCategory.label)
             }
             DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                Category.entries.forEach { category ->
+                categoryOptions.forEach { category ->
                     DropdownMenuItem(
                         text = { Text(category.label) },
                         onClick = {

@@ -3,15 +3,22 @@ package com.example.nemebudget.repository
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.Budget
 import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.CategoryDefinition
+import com.example.nemebudget.model.CategoryPresentation
+import com.example.nemebudget.model.CustomBudgetCategory
 import com.example.nemebudget.model.ModelStatus
 import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
+import com.example.nemebudget.model.toDefinition
+import com.example.nemebudget.model.resolveCategoryByLabel
+import com.example.nemebudget.model.resolveCategoryById
 import com.example.nemebudget.pipeline.NotificationBatchProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -26,7 +33,7 @@ class FakeRepository(
 ) : AppRepository {
 
     private val transactionsFlow = MutableStateFlow(generateTransactions())
-    private val budgetsFlow = MutableStateFlow(generateBudgets(transactionsFlow.value))
+    private val budgetsFlow = MutableStateFlow(generateBudgets(transactionsFlow.value, AppSettings()))
     private val settingsFlow = MutableStateFlow(
         AppSettings(
             primaryBank = "Chase",
@@ -56,58 +63,126 @@ class FakeRepository(
         }
     }
 
-    override fun getAllTransactions(): Flow<List<Transaction>> = transactionsFlow
+    override fun getAllTransactions(): Flow<List<Transaction>> = combine(transactionsFlow, settingsFlow) { txns, settings ->
+        txns.map { it.withResolvedCategory(settings) }
+    }
 
     override fun getTransactionsByDateRange(start: Long, end: Long): Flow<List<Transaction>> {
-        return transactionsFlow.map { txns -> txns.filter { it.date in start..end } }
+        return combine(transactionsFlow, settingsFlow) { txns, settings ->
+            txns.filter { it.date in start..end }.map { it.withResolvedCategory(settings) }
+        }
     }
 
     override suspend fun addTransaction(transaction: Transaction) {
         val currentMaxId = transactionsFlow.value.maxOfOrNull { it.id } ?: 0
         val row = transaction.copy(id = if (transaction.id == 0) currentMaxId + 1 else transaction.id)
         transactionsFlow.value = (listOf(row) + transactionsFlow.value).sortedByDescending { it.date }
-        budgetsFlow.value = generateBudgets(transactionsFlow.value)
+        budgetsFlow.value = generateBudgets(transactionsFlow.value, settingsFlow.value)
     }
 
     override suspend fun updateTransaction(transaction: Transaction) {
         transactionsFlow.value = transactionsFlow.value.map { current ->
             if (current.id == transaction.id) transaction else current
         }
-        budgetsFlow.value = generateBudgets(transactionsFlow.value)
+        budgetsFlow.value = generateBudgets(transactionsFlow.value, settingsFlow.value)
     }
 
     override suspend fun deleteTransaction(id: Int) {
         transactionsFlow.value = transactionsFlow.value.filterNot { it.id == id }
-        budgetsFlow.value = generateBudgets(transactionsFlow.value)
+        budgetsFlow.value = generateBudgets(transactionsFlow.value, settingsFlow.value)
     }
 
     override fun getBudgets(): Flow<List<Budget>> = budgetsFlow
 
     override suspend fun upsertBudget(budget: Budget) {
-        val current = budgetsFlow.value.toMutableList()
-        val index = current.indexOfFirst { it.category == budget.category }
-        if (index >= 0) {
-            current[index] = budget.copy(spent = current[index].spent)
+        val updatedSettings = if (budget.isCustom) {
+            settingsFlow.value.copy(
+                customBudgetCategories = settingsFlow.value.customBudgetCategories.map { current ->
+                    if (current.id == budget.id) current.copy(limit = budget.limit) else current
+                }
+            )
         } else {
-            current.add(budget)
+            val category = budget.category ?: return
+            settingsFlow.value.copy(
+                budgetLimits = settingsFlow.value.budgetLimits + (category to budget.limit)
+            )
         }
-        budgetsFlow.value = current.sortedBy { it.category.ordinal }
+        settingsFlow.value = updatedSettings
+        budgetsFlow.value = generateBudgets(transactionsFlow.value, updatedSettings)
     }
 
     override suspend fun deleteBudget(category: Category) {
-        budgetsFlow.value = budgetsFlow.value.filterNot { it.category == category }
+        val updatedSettings = settingsFlow.value.copy(
+            budgetLimits = settingsFlow.value.budgetLimits - category
+        )
+        settingsFlow.value = updatedSettings
+        budgetsFlow.value = generateBudgets(transactionsFlow.value, updatedSettings)
+    }
+
+    override suspend fun addCustomBudgetCategory(label: String, emoji: String, limit: Double) {
+        val trimmedLabel = label.trim()
+        if (trimmedLabel.isBlank()) return
+        val cleanedEmoji = emoji.trim().ifBlank { "📁" }
+        val nextCustom = CustomBudgetCategory(
+            id = "custom_${System.currentTimeMillis()}",
+            label = trimmedLabel,
+            emoji = cleanedEmoji,
+            limit = limit
+        )
+        val updatedSettings = settingsFlow.value.copy(
+            customBudgetCategories = settingsFlow.value.customBudgetCategories + nextCustom
+        )
+        settingsFlow.value = updatedSettings
+        budgetsFlow.value = generateBudgets(transactionsFlow.value, updatedSettings)
+    }
+
+    override suspend fun updateBudgetCategoryMeta(budgetId: String, label: String, emoji: String) {
+        val trimmedLabel = label.trim()
+        val cleanedEmoji = emoji.trim().ifBlank { "📁" }
+        if (trimmedLabel.isBlank()) return
+
+        val updatedSettings = if (budgetId.startsWith(BUILTIN_PREFIX)) {
+            val categoryName = budgetId.removePrefix(BUILTIN_PREFIX)
+            settingsFlow.value.copy(
+                categoryPresentation = settingsFlow.value.categoryPresentation +
+                    (categoryName to CategoryPresentation(label = trimmedLabel, emoji = cleanedEmoji))
+            )
+        } else {
+            settingsFlow.value.copy(
+                customBudgetCategories = settingsFlow.value.customBudgetCategories.map { current ->
+                    if (current.id == budgetId) current.copy(label = trimmedLabel, emoji = cleanedEmoji) else current
+                }
+            )
+        }
+
+        settingsFlow.value = updatedSettings
+        budgetsFlow.value = generateBudgets(transactionsFlow.value, updatedSettings)
+    }
+
+    override suspend fun deleteCustomBudgetCategory(budgetId: String) {
+        val updatedSettings = settingsFlow.value.copy(
+            customBudgetCategories = settingsFlow.value.customBudgetCategories.filterNot { it.id == budgetId }
+        )
+        settingsFlow.value = updatedSettings
+        budgetsFlow.value = generateBudgets(transactionsFlow.value, updatedSettings)
     }
 
     override fun getSettings(): Flow<AppSettings> = settingsFlow
 
     override suspend fun saveSettings(settings: AppSettings) {
         settingsFlow.value = settings
+        budgetsFlow.value = generateBudgets(transactionsFlow.value, settings)
     }
 
     override fun getPendingNotificationCount(): Flow<Int> = pendingNotificationCountFlow
 
-    override suspend fun processPendingNotifications(limit: Int): Int {
+    override suspend fun processPendingNotifications(
+        limit: Int,
+        onProgress: ((processed: Int, total: Int, currentItemLabel: String?) -> Unit)?
+    ): Int {
         if (batchProcessor != null) {
+            val total = min(limit, pendingNotificationCountFlow.value)
+            onProgress?.invoke(0, total, null)
             val result = batchProcessor.processPending(limit)
             if (result.createdTransactions.isNotEmpty()) {
                 val currentMaxId = transactionsFlow.value.maxOfOrNull { it.id } ?: 0
@@ -115,8 +190,9 @@ class FakeRepository(
                     tx.copy(id = currentMaxId + index + 1)
                 }
                 transactionsFlow.value = (withIds + transactionsFlow.value).sortedByDescending { it.date }
-                budgetsFlow.value = generateBudgets(transactionsFlow.value)
+                budgetsFlow.value = generateBudgets(transactionsFlow.value, settingsFlow.value)
             }
+            onProgress?.invoke(result.processedRawCount.coerceAtMost(total), total, null)
             return result.processedRawCount
         }
 
@@ -124,13 +200,19 @@ class FakeRepository(
         if (pending <= 0) return 0
 
         val processedCount = min(limit, pending)
-        delay(700)
+        onProgress?.invoke(0, processedCount, null)
+
+        repeat(processedCount) { idx ->
+            delay(120)
+            onProgress?.invoke(idx + 1, processedCount, "Sample notification ${idx + 1}")
+        }
+
         pendingNotificationCountFlow.value = pending - processedCount
 
         if (processedCount > 0) {
             val newTransactions = createProcessedNotificationTransactions(processedCount)
             transactionsFlow.value = (newTransactions + transactionsFlow.value).sortedByDescending { it.date }
-            budgetsFlow.value = generateBudgets(transactionsFlow.value)
+            budgetsFlow.value = generateBudgets(transactionsFlow.value, settingsFlow.value)
         }
 
         return processedCount
@@ -188,9 +270,9 @@ class FakeRepository(
     override suspend fun exportToCsv(): String {
         val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val header = "Date,Merchant,Amount,Category,AI Parsed,Confidence"
-        val rows = transactionsFlow.value.joinToString("\n") { txn ->
+        val rows = transactionsFlow.value.map { it.withResolvedCategory(settingsFlow.value) }.joinToString("\n") { txn ->
             val date = formatter.format(Date(txn.date))
-            "$date,\"${txn.merchant}\",${txn.amount},${txn.category.name},${txn.isAiParsed},${txn.confidence}"
+            "$date,\"${txn.merchant}\",${txn.amount},${txn.category.label},${txn.isAiParsed},${txn.confidence}"
         }
         return "$header\n$rows"
     }
@@ -229,7 +311,7 @@ class FakeRepository(
                 id = id,
                 merchant = merchant,
                 amount = String.format(Locale.US, "%.2f", amount).toDouble(),
-                category = category,
+                category = category.toDefinition(),
                 date = timestamp,
                 isAiParsed = id % 3 != 0,
                 confidence = (0.6f + (id % 40) * 0.01f).coerceAtMost(0.99f),
@@ -238,8 +320,8 @@ class FakeRepository(
         }.sortedByDescending { it.date }
     }
 
-    private fun generateBudgets(transactions: List<Transaction>): List<Budget> {
-        val spentByCategory = transactions.groupBy { it.category }
+    private fun generateBudgets(transactions: List<Transaction>, settings: AppSettings): List<Budget> {
+        val spentByCategory = transactions.groupBy { it.category.id }
             .mapValues { (_, txns) -> txns.sumOf { it.amount } }
 
         val limits = mapOf(
@@ -256,13 +338,36 @@ class FakeRepository(
             Category.OTHER to 180.0
         )
 
-        return Category.entries.map { category ->
+        val builtInBudgets = Category.entries.map { category ->
+            val override = settings.categoryPresentation[category.name]
             Budget(
+                id = "$BUILTIN_PREFIX${category.name}",
                 category = category,
-                spent = spentByCategory[category] ?: 0.0,
-                limit = limits.getValue(category)
+                label = override?.label ?: category.label,
+                emoji = override?.emoji ?: category.emoji,
+                spent = spentByCategory[category.name] ?: 0.0,
+                limit = settings.budgetLimits[category] ?: limits.getValue(category),
+                isCustom = false
             )
         }
+
+        val customBudgets = settings.customBudgetCategories.map { custom ->
+            Budget(
+                id = custom.id,
+                category = null,
+                label = custom.label,
+                emoji = custom.emoji,
+                spent = spentByCategory[custom.id] ?: 0.0,
+                limit = custom.limit,
+                isCustom = true
+            )
+        }
+
+        return builtInBudgets + customBudgets
+    }
+
+    private companion object {
+        const val BUILTIN_PREFIX = "builtin:"
     }
 
     private fun createProcessedNotificationTransactions(count: Int): List<Transaction> {
@@ -278,12 +383,19 @@ class FakeRepository(
                 id = currentMaxId + index,
                 merchant = merchant,
                 amount = String.format(Locale.US, "%.2f", 8.0 + index * 5.75).toDouble(),
-                category = category,
+                category = category.toDefinition(),
                 date = now - (index * 60_000L),
                 isAiParsed = true,
                 confidence = 0.93f,
                 rawNotificationText = "Processed queued notification #$index"
             )
         }
+    }
+
+    private fun Transaction.withResolvedCategory(settings: AppSettings): Transaction {
+        val resolved = settings.resolveCategoryById(category.id)
+            ?: settings.resolveCategoryByLabel(category.label)
+            ?: category
+        return copy(category = resolved)
     }
 }

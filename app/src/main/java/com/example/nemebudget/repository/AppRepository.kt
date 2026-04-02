@@ -18,11 +18,17 @@ interface AppRepository {
     fun getBudgets(): Flow<List<Budget>>
     suspend fun upsertBudget(budget: Budget)
     suspend fun deleteBudget(category: Category)
+    suspend fun addCustomBudgetCategory(label: String, emoji: String, limit: Double)
+    suspend fun updateBudgetCategoryMeta(budgetId: String, label: String, emoji: String)
+    suspend fun deleteCustomBudgetCategory(budgetId: String)
 
     fun getSettings(): Flow<AppSettings>
     suspend fun saveSettings(settings: AppSettings)
     fun getPendingNotificationCount(): Flow<Int>
-    suspend fun processPendingNotifications(limit: Int): Int
+    suspend fun processPendingNotifications(
+        limit: Int,
+        onProgress: ((processed: Int, total: Int, currentItemLabel: String?) -> Unit)? = null
+    ): Int
 
     fun getRejectedNotifications(): Flow<List<RejectedNotification>>
     suspend fun addRejectedNotification(title: String, text: String, reason: String)

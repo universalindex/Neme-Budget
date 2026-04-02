@@ -4,7 +4,10 @@ import ai.mlc.mlcllm.MLCEngine
 import ai.mlc.mlcllm.OpenAIProtocol
 import android.content.Context
 import android.util.Log
+import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.toDefinition
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
@@ -36,12 +39,13 @@ class LlmPipeline(private val context: Context) {
 
     private val modelLib = "qwen3_q4f16_1"
 
-    // Inject the allowed categories directly into the JSON Schema as an enum constraint
-    private val allowedCategories = Category.entries.map { it.label }
-    private val allowedCategoryText = allowedCategories.joinToString(", ")
+    private fun allowedCategories(): List<String> = loadCategoryCatalog().map { it.label }
 
-    // Inject the allowed categories and transaction types into the JSON Schema as enum constraints
-    private val jsonSchema = """
+    private fun allowedCategoryText(): String = allowedCategories().joinToString(", ")
+
+    private fun jsonSchema(): String {
+        val categories = allowedCategories()
+        return """
         {
           "type": "object",
           "properties": {
@@ -49,12 +53,13 @@ class LlmPipeline(private val context: Context) {
             "amount": {"type": "number"},
              "category": {
                "type": "string",
-               "enum": [${allowedCategories.joinToString(", ") { "\"$it\"" }}]
+               "enum": [${categories.joinToString(", ") { "\"$it\"" }}]
              }
            },
           "required": ["merchant", "amount", "category"]
         }
-    """.trimIndent()
+        """.trimIndent()
+    }
 
     private val systemPrompt = """
 Extract: Merchant, Amount, Category.
@@ -107,7 +112,7 @@ Output only valid JSONS
                 messages = messages,
                 response_format = OpenAIProtocol.ResponseFormat(
                     type = "json_object",
-                    schema = jsonSchema
+                    schema = jsonSchema()
                 ),
                 max_tokens = 1 
             )
@@ -147,7 +152,7 @@ Output only valid JSONS
                     Original Notification: "$rawNotification"
                     Your previous output: $jsonStr
                     Validation Error: ${tx.verificationNotes}
-                    Valid categories (exact spelling): $allowedCategoryText
+                    Valid categories (exact spelling): ${allowedCategoryText()}
                     Return JSON only with keys: merchant, amount, category.
                     Do not abbreviate category names.
                 """.trimIndent()
@@ -189,7 +194,7 @@ Output only valid JSONS
                 messages = messages,
                 response_format = OpenAIProtocol.ResponseFormat(
                     type = "json_object",
-                    schema = jsonSchema
+                    schema = jsonSchema()
                 ),
                 max_tokens = 220
             )
@@ -243,7 +248,7 @@ Output only valid JSONS
                 notes = "FAILED: Amount '$amountString' not found in original text."
             }
 
-            if (!allowedCategories.contains(category)) {
+            if (!allowedCategories().contains(category)) {
                 isVerified = false
                 notes = "FAILED: Category '$category' is not a valid option."
             }
@@ -305,13 +310,46 @@ Output only valid JSONS
 
     private fun normalizeCategory(rawCategory: String): String {
         val trimmed = rawCategory.trim()
-        allowedCategories.firstOrNull { it.equals(trimmed, ignoreCase = true) }?.let { return it }
+        allowedCategories().firstOrNull { it.equals(trimmed, ignoreCase = true) }?.let { return it }
 
         if (trimmed.length == 1) {
-            val matches = allowedCategories.filter { it.startsWith(trimmed, ignoreCase = true) }
+            val matches = allowedCategories().filter { it.startsWith(trimmed, ignoreCase = true) }
             if (matches.size == 1) return matches.first()
         }
         return trimmed
+    }
+
+    private fun loadCategoryCatalog(): List<CategoryDefinition> {
+        val prefs = context.applicationContext.getSharedPreferences("nemebudget_prefs", Context.MODE_PRIVATE)
+        val json = prefs.getString("app_settings_json", null) ?: return Category.entries.map { it.toDefinition() }
+
+        return try {
+            val root = JSONObject(json)
+            val list = mutableListOf<CategoryDefinition>()
+
+            Category.entries.forEach { category ->
+                val presentation = root.optJSONObject("categoryPresentation")?.optJSONObject(category.name)
+                list += CategoryDefinition(
+                    id = category.name,
+                    label = presentation?.optString("label").takeUnless { it.isNullOrBlank() } ?: category.label,
+                    emoji = presentation?.optString("emoji").takeUnless { it.isNullOrBlank() } ?: category.emoji,
+                    isCustom = false
+                )
+            }
+
+            val customArray = root.optJSONArray("customBudgetCategories") ?: JSONArray()
+            for (index in 0 until customArray.length()) {
+                val item = customArray.optJSONObject(index) ?: continue
+                val id = item.optString("id").ifBlank { continue }
+                val label = item.optString("label").ifBlank { continue }
+                val emoji = item.optString("emoji").ifBlank { "📁" }
+                list += CategoryDefinition(id = id, label = label, emoji = emoji, isCustom = true)
+            }
+
+            if (list.isEmpty()) Category.entries.map { it.toDefinition() } else list
+        } catch (_: Throwable) {
+            Category.entries.map { it.toDefinition() }
+        }
     }
 
     fun getBestLlmDevice(): String {

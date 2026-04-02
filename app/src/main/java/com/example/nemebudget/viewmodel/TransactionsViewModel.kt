@@ -2,24 +2,30 @@ package com.example.nemebudget.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
+import com.example.nemebudget.model.transactionCategoryOptions
 import com.example.nemebudget.repository.AppRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
     private val searchQuery = MutableStateFlow("")
-    private val selectedFilter = MutableStateFlow<Category?>(null)
+    private val selectedFilter = MutableStateFlow<CategoryDefinition?>(null)
 
     val query: StateFlow<String> = searchQuery
-    val filter: StateFlow<Category?> = selectedFilter
+    val filter: StateFlow<CategoryDefinition?> = selectedFilter
+
+    val categoryOptions: StateFlow<List<CategoryDefinition>> = repo.getSettings()
+        .map { settings -> settings.transactionCategoryOptions() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val transactions: StateFlow<List<Transaction>> = repo.getAllTransactions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -31,7 +37,7 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
     ) { txns, query, filter ->
         txns.filter { t ->
             (query.isBlank() || t.merchant.contains(query, ignoreCase = true)) &&
-                (filter == null || t.category == filter)
+                (filter == null || t.category.id == filter.id)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -42,7 +48,7 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
         searchQuery.value = query
     }
 
-    fun onFilterChanged(category: Category?) {
+    fun onFilterChanged(category: CategoryDefinition?) {
         selectedFilter.value = category
     }
 
@@ -50,7 +56,7 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
         viewModelScope.launch {
             repo.updateTransaction(updated)
 
-            if (original.category != updated.category) {
+            if (original.category.id != updated.category.id) {
                 val newRule = "${original.merchant.trim()} = ${updated.category.label}"
                 val currentSettings = repo.getSettings().first()
                 val hasRule = currentSettings.customRules.any { it.equals(newRule, ignoreCase = true) }
@@ -61,7 +67,7 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
         }
     }
 
-    fun addManualTransaction(merchant: String, amount: Double, category: Category) {
+    fun addManualTransaction(merchant: String, amount: Double, category: CategoryDefinition) {
         val safeMerchant = merchant.trim().ifBlank { "Manual Entry" }
         val safeAmount = amount.coerceAtLeast(0.01)
         viewModelScope.launch {
@@ -95,7 +101,7 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
         errorId: Int,
         merchant: String,
         amount: Double,
-        category: Category,
+        category: CategoryDefinition,
         rawNotificationText: String
     ) {
         val safeMerchant = merchant.trim().ifBlank { "Manual Entry" }
