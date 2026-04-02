@@ -40,9 +40,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,18 +51,22 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.navigation.NavType
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import com.example.nemebudget.ui.theme.NemeBudgetTheme
 import com.example.nemebudget.llm.ExtractedTransaction
 import com.example.nemebudget.llm.LlmPipeline
+import com.example.nemebudget.pipeline.NotificationBatchProcessor
 import com.example.nemebudget.db.AppDatabase
+import com.example.nemebudget.repository.FakeRepository
 import com.example.nemebudget.repository.RealRepository
 import com.example.nemebudget.ui.dashboard.DashboardScreen
 import com.example.nemebudget.ui.navigation.AppDestination
 import com.example.nemebudget.ui.navigation.bottomDestinations
+import com.example.nemebudget.ui.screens.OnboardingFlowScreen
 import com.example.nemebudget.ui.screens.BudgetsScreen
-import com.example.nemebudget.ui.screens.OnboardingModelScreen
-import com.example.nemebudget.ui.screens.OnboardingPermissionScreen
-import com.example.nemebudget.ui.screens.OnboardingWelcomeScreen
+import com.example.nemebudget.ui.screens.ResolveErrorScreen
 import com.example.nemebudget.ui.screens.SettingsScreen
 import com.example.nemebudget.ui.screens.TransactionsScreen
 import com.example.nemebudget.viewmodel.BudgetsViewModel
@@ -69,6 +74,9 @@ import com.example.nemebudget.viewmodel.DashboardViewModel
 import com.example.nemebudget.viewmodel.SettingsViewModel
 import com.example.nemebudget.viewmodel.TransactionsViewModel
 import kotlinx.coroutines.launch
+
+private const val APP_PREFS_NAME = "nemebudget_prefs"
+private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,9 +98,6 @@ private fun MainApp() {
     val showBottomBar = bottomDestinations.any { it.route == currentRoute }
 
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("nemebudget_prefs", Context.MODE_PRIVATE) }
-    var onboardingCompleted by remember { mutableStateOf(prefs.getBoolean("onboarding_completed", false)) }
-    var listenerEnabled by remember { mutableStateOf(isNotificationListenerEnabled(context)) }
     // Hoist LlmPipeline so it stays in RAM across tab navigation
     val pipeline = remember { LlmPipeline(context) }
     // Open the encrypted database (SQLCipher)
@@ -103,37 +108,47 @@ private fun MainApp() {
     val transactionsViewModel = remember { TransactionsViewModel(repo) }
     val budgetsViewModel = remember { BudgetsViewModel(repo) }
     val settingsViewModel = remember { SettingsViewModel(repo) }
+    val transactionCategoryOptions by transactionsViewModel.categoryOptions.collectAsStateWithLifecycle()
+    val modelStatus by settingsViewModel.modelStatus.collectAsStateWithLifecycle()
+
+    fun navigateToTopLevel(route: String) {
+        navController.navigate(route) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    val onboardingPrefs = context.applicationContext.getSharedPreferences(APP_PREFS_NAME, Context.MODE_PRIVATE)
+    var onboardingCompleted by remember(context) {
+        mutableStateOf(onboardingPrefs.getBoolean(KEY_ONBOARDING_COMPLETED, false))
+    }
+
+    if (!onboardingCompleted) {
+        OnboardingFlowScreen(
+            modelStatus = modelStatus,
+            onFinished = {
+                onboardingPrefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, true).apply()
+                onboardingCompleted = true
+            }
+        )
+        return
+    }
 
     var showListenerPermissionDialog by remember { mutableStateOf(false) }
     val postNotificationsPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { /* no-op: status is checked on recomposition */ }
-
     LaunchedEffect(Unit) {
         settingsViewModel.processOnAppOpenIfNeeded()
-    }
-
-    LaunchedEffect(onboardingCompleted) {
-        while (!onboardingCompleted) {
-            listenerEnabled = isNotificationListenerEnabled(context)
-            kotlinx.coroutines.delay(1000)
-        }
-    }
-
-    LaunchedEffect(onboardingCompleted, listenerEnabled) {
-        if (!onboardingCompleted) return@LaunchedEffect
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !isPostNotificationsGranted(context)) {
             postNotificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (!listenerEnabled) {
+        if (!isNotificationListenerEnabled(context)) {
             showListenerPermissionDialog = true
         }
-    }
-
-    val startDestination = if (onboardingCompleted) {
-        AppDestination.Dashboard.route
-    } else {
-        AppDestination.OnboardingWelcome.route
     }
 
     Scaffold(
@@ -145,15 +160,7 @@ private fun MainApp() {
                         val selected = currentRoute == destination.route
                         NavigationBarItem(
                             selected = selected,
-                            onClick = {
-                                navController.navigate(destination.route) {
-                                    popUpTo(navController.graph.startDestinationId) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
+                            onClick = { navigateToTopLevel(destination.route) },
                             icon = {
                                 androidx.compose.material3.Icon(
                                     imageVector = destination.icon,
@@ -169,47 +176,17 @@ private fun MainApp() {
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = startDestination,
+            startDestination = AppDestination.Dashboard.route,
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable(AppDestination.OnboardingWelcome.route) {
-                OnboardingWelcomeScreen(
-                    onGetStarted = { navController.navigate(AppDestination.OnboardingPermission.route) }
-                )
-            }
-            composable(AppDestination.OnboardingPermission.route) {
-                OnboardingPermissionScreen(
-                    listenerEnabled = listenerEnabled,
-                    onGrantPermission = {
-                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                    },
-                    onNext = { navController.navigate(AppDestination.OnboardingModel.route) }
-                )
-            }
-            composable(AppDestination.OnboardingModel.route) {
-                val modelStatus by settingsViewModel.modelStatus.collectAsStateWithLifecycle()
-                OnboardingModelScreen(
-                    modelStatus = modelStatus,
-                    onReady = {
-                        if (!onboardingCompleted) {
-                            prefs.edit().putBoolean("onboarding_completed", true).apply()
-                            onboardingCompleted = true
-                        }
-                        navController.navigate(AppDestination.Dashboard.route) {
-                            popUpTo(AppDestination.OnboardingWelcome.route) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    }
-                )
-            }
             composable(AppDestination.Dashboard.route) {
                 DashboardScreen(
                     viewModel = dashboardViewModel,
-                    onSeeAllTransactions = { navController.navigate(AppDestination.Transactions.route) }
+                    onSeeAllTransactions = { navigateToTopLevel(AppDestination.Transactions.route) }
                 )
             }
             composable(AppDestination.Transactions.route) {
-                TransactionsScreen(viewModel = transactionsViewModel)
+                TransactionsScreen(viewModel = transactionsViewModel, navController = navController)
             }
             composable(AppDestination.Budgets.route) {
                 BudgetsScreen(viewModel = budgetsViewModel)
@@ -224,10 +201,40 @@ private fun MainApp() {
             composable(AppDestination.Lab.route) {
                 LlmTestingScreen(pipeline = pipeline, modifier = Modifier.fillMaxSize())
             }
+            composable(
+                route = AppDestination.ResolveError.route,
+                arguments = listOf(navArgument("errorId") { type = NavType.IntType })
+            ) { backStackEntry ->
+                val errorId = backStackEntry.arguments?.getInt("errorId") ?: return@composable
+                val rejectedItems by transactionsViewModel.rejectedNotifications.collectAsStateWithLifecycle()
+                val error = rejectedItems.find { it.id == errorId }
+                
+                if (error != null) {
+                    ResolveErrorScreen(
+                        error = error,
+                        categoryOptions = transactionCategoryOptions,
+                        onBack = { navController.popBackStack() },
+                        onDeleteError = {
+                            transactionsViewModel.deleteRejectedItem(errorId)
+                            navController.popBackStack()
+                        },
+                        onSaveAsTransaction = { merchant, amount, category ->
+                            transactionsViewModel.resolveRejectedAsTransaction(
+                                errorId = errorId,
+                                merchant = merchant,
+                                amount = amount,
+                                category = category,
+                                rawNotificationText = error.text
+                            )
+                            navController.popBackStack()
+                        }
+                    )
+                }
+            }
         }
     }
 
-    if (showListenerPermissionDialog && onboardingCompleted && !isNotificationListenerEnabled(context)) {
+    if (showListenerPermissionDialog && !isNotificationListenerEnabled(context)) {
         AlertDialog(
             onDismissRequest = { showListenerPermissionDialog = false },
             title = { Text("Enable Notification Access") },

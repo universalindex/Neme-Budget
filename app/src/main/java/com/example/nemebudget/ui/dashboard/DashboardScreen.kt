@@ -4,11 +4,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -27,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,9 +40,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.viewmodel.DashboardViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -56,16 +61,41 @@ fun DashboardScreen(
     val spendingByCategory by viewModel.spendingByCategory.collectAsStateWithLifecycle()
     val safeToSpend by viewModel.safeToSpend.collectAsStateWithLifecycle()
     val selectedMonth by viewModel.selectedMonth.collectAsStateWithLifecycle()
+    val density = LocalDensity.current
+    val swipeThresholdPx = remember(density) { with(density) { 48.dp.toPx() } }
+    var totalDrag by remember { mutableFloatStateOf(0f) }
+    val onPrevious = viewModel::previousMonth
+    val onNext = viewModel::nextMonth
 
     LazyColumn(
-        modifier = Modifier.padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .pointerInput(onPrevious, onNext) {
+                detectHorizontalDragGestures(
+                    onHorizontalDrag = { change, dragAmount ->
+                        totalDrag += dragAmount
+                        change.consume()
+                    },
+                    onDragEnd = {
+                        when {
+                            totalDrag <= -swipeThresholdPx -> onNext()
+                            totalDrag >= swipeThresholdPx -> onPrevious()
+                        }
+                        totalDrag = 0f
+                    },
+                    onDragCancel = {
+                        totalDrag = 0f
+                    }
+                )
+            },
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
             MonthSelector(
                 label = selectedMonth.label(),
-                onPrevious = viewModel::previousMonth,
-                onNext = viewModel::nextMonth
+                onPrevious = onPrevious,
+                onNext = onNext
             )
         }
 
@@ -141,7 +171,7 @@ private fun SafeToSpendCard(safeToSpend: Double) {
 }
 
 @Composable
-private fun SpendingDonutCard(spendingByCategory: Map<Category, Double>) {
+private fun SpendingDonutCard(spendingByCategory: Map<CategoryDefinition, Double>) {
     val entries = spendingByCategory.entries
         .filter { it.value > 0.0 }
         .sortedByDescending { it.value }
@@ -265,7 +295,3 @@ private fun RecentTransactionsCard(
         }
     }
 }
-
-
-
-

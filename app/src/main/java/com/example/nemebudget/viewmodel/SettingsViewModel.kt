@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.math.min
 
 class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     data class KnownApp(val label: String, val packageName: String)
@@ -160,9 +161,20 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
                 return@launch
             }
 
-            _processingState.value = ProcessingState.Processing(pendingCount = pending)
+            val total = min(pending, limit)
+            _processingState.value = ProcessingState.Processing(
+                processedCount = 0,
+                totalCount = total,
+                currentItemLabel = null
+            )
             try {
-                val processed = repo.processPendingNotifications(limit)
+                val processed = repo.processPendingNotifications(limit) { done, all, current ->
+                    _processingState.value = ProcessingState.Processing(
+                        processedCount = done.coerceAtMost(all),
+                        totalCount = all,
+                        currentItemLabel = current
+                    )
+                }
                 refreshCount()
                 _processingState.value = ProcessingState.Success(
                     processedCount = processed,

@@ -25,5 +25,23 @@ class BudgetsViewModel(private val repo: AppRepository) : ViewModel() {
             repo.deleteBudget(category)
         }
     }
+
+    fun addCustomCategory(label: String, emoji: String, limit: Double) {
+        viewModelScope.launch {
+            repo.addCustomBudgetCategory(label, emoji, limit)
+        }
+    }
+
+    fun updateBudgetCategoryMeta(budgetId: String, label: String, emoji: String) {
+        viewModelScope.launch {
+            repo.updateBudgetCategoryMeta(budgetId, label, emoji)
+        }
+    }
+
+    fun deleteCustomCategory(budgetId: String) {
+        viewModelScope.launch {
+            repo.deleteCustomBudgetCategory(budgetId)
+        }
+    }
 }
 

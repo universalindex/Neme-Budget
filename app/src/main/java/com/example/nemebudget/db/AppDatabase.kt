@@ -17,7 +17,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  *
  * @Database tells Room this is the master file, listing all the tables (entities) inside it.
  */
-@Database(entities = [RawNotification::class, TransactionEntity::class], version = 3, exportSchema = false)
+@Database(entities = [RawNotification::class, TransactionEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     // Expose the DAO so your AppRepository can call its functions
@@ -87,6 +87,36 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // v3 -> v4 schema change:
+        // add stable category id + emoji fields so custom categories can be preserved.
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN categoryId TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN categoryEmoji TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    """
+                    UPDATE transactions
+                    SET categoryId = categoryLabel,
+                        categoryEmoji = CASE categoryLabel
+                            WHEN 'Dining' THEN '🍔'
+                            WHEN 'Groceries' THEN '🛒'
+                            WHEN 'Gas' THEN '⛽'
+                            WHEN 'Bills' THEN '💡'
+                            WHEN 'Subscriptions' THEN '📺'
+                            WHEN 'Entertainment' THEN '🎬'
+                            WHEN 'Shopping' THEN '🛍️'
+                            WHEN 'Transport' THEN '🚗'
+                            WHEN 'Health' THEN '💊'
+                            WHEN 'Travel' THEN '✈️'
+                            WHEN 'Other' THEN '💳'
+                            ELSE ''
+                        END
+                    WHERE categoryId = ''
+                    """.trimIndent()
+                )
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
         @Volatile
@@ -116,6 +146,7 @@ abstract class AppDatabase : RoomDatabase() {
                     .openHelperFactory(SupportOpenHelperFactory(passphrase))
                     .addMigrations(MIGRATION_1_2)
                     .addMigrations(MIGRATION_2_3)
+                    .addMigrations(MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance

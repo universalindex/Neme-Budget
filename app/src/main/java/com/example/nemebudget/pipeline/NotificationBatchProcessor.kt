@@ -6,7 +6,9 @@ import com.example.nemebudget.db.AppDatabase
 import com.example.nemebudget.db.RawNotification
 import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Transaction
+import com.example.nemebudget.model.toDefinition
 import kotlinx.coroutines.flow.Flow
 import java.util.Locale
 
@@ -41,10 +43,18 @@ class NotificationBatchProcessor(
 
                 val extraction = pipeline.extractWithRetry(rawNotification = raw.text, maxAttempts = 2)
                 val tx = extraction.transaction
-                if (tx.isVerified) {
-                    val category = Category.entries.firstOrNull {
-                        it.label.equals(tx.category, ignoreCase = true)
-                    } ?: Category.OTHER
+                val rejectReason = when {
+                    tx.merchant.equals("Error", ignoreCase = true) -> "merchant=Error"
+                    tx.merchant.equals("Unknown", ignoreCase = true) || tx.merchant.isBlank() -> "merchant missing/unknown"
+                    tx.amount <= 0.0 -> "amount <= 0"
+                    else -> null
+                }
+
+                if (rejectReason != null) {
+                    skippedCount++
+                    Log.d("BatchProcessor", "Rejected extraction for rawId=${raw.id}: $rejectReason")
+                } else if (tx.isVerified) {
+                    val category = resolveCategory(tx.category)
 
                     createdTransactions += Transaction(
                         merchant = tx.merchant,
@@ -84,6 +94,12 @@ class NotificationBatchProcessor(
         val hasMoneySignal = MONEY_REGEX.containsMatchIn(combined)
         val hasActionSignal = ACTION_WORDS.any { combined.contains(it) }
         return hasMoneySignal && hasActionSignal
+    }
+
+    private fun resolveCategory(label: String): CategoryDefinition {
+        return Category.entries.firstOrNull { it.label.equals(label, ignoreCase = true) }
+            ?.toDefinition()
+            ?: CategoryDefinition(id = Category.OTHER.name, label = Category.OTHER.label, emoji = Category.OTHER.emoji)
     }
 
     data class BatchProcessingResult(
