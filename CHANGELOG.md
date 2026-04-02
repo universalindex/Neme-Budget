@@ -3,6 +3,33 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-04-02 - AI Assistant (Onboarding Flow Rewired Back Into Startup)
+
+### What Changed
+* Reconnected the existing onboarding composables in `app/src/main/java/com/example/nemebudget/ui/screens/OnboardingScreens.kt` to the real app startup flow.
+* Added a new `OnboardingFlowScreen(...)` coordinator that sequences:
+  1. welcome screen,
+  2. permission gate,
+  3. model-ready screen.
+* Made the permission step functional by checking live OS state every second:
+  * Notification Listener enabled state via `Settings.Secure.enabled_notification_listeners`
+  * `POST_NOTIFICATIONS` runtime permission on Android 13+
+* Kept the model screen tied to the existing `ModelStatus` flow so onboarding reuses the same readiness signal used in Settings.
+* Added a persisted first-run completion flag in `MainActivity.kt`:
+  * Shared prefs file: `nemebudget_prefs`
+  * Key: `onboarding_completed`
+  * Once set, the app skips onboarding on future launches and drops into the existing bottom-nav shell immediately.
+
+### Why This Was Done
+1. The onboarding screens already existed but were not actually wired into navigation, so they behaved like dead UI.
+2. A small persisted boolean is the simplest durable way to make onboarding show once per install without moving the whole app to a more complex navigation state machine.
+3. Keeping the existing permission prompt logic in the shell means the app still has a fallback if permissions are later revoked.
+
+### Files Modified
+* `app/src/main/java/com/example/nemebudget/ui/screens/OnboardingScreens.kt`
+* `app/src/main/java/com/example/nemebudget/MainActivity.kt`
+* `CHANGELOG.md`
+
 ## 2026-04-02 - AI Assistant (Fixed Navigation Crash: Added ResolveError Route + Import Cleanup)
 
 ### What Changed

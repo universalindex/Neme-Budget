@@ -63,6 +63,7 @@ import com.example.nemebudget.repository.RealRepository
 import com.example.nemebudget.ui.dashboard.DashboardScreen
 import com.example.nemebudget.ui.navigation.AppDestination
 import com.example.nemebudget.ui.navigation.bottomDestinations
+import com.example.nemebudget.ui.screens.OnboardingFlowScreen
 import com.example.nemebudget.ui.screens.BudgetsScreen
 import com.example.nemebudget.ui.screens.ResolveErrorScreen
 import com.example.nemebudget.ui.screens.SettingsScreen
@@ -72,6 +73,9 @@ import com.example.nemebudget.viewmodel.DashboardViewModel
 import com.example.nemebudget.viewmodel.SettingsViewModel
 import com.example.nemebudget.viewmodel.TransactionsViewModel
 import kotlinx.coroutines.launch
+
+private const val APP_PREFS_NAME = "nemebudget_prefs"
+private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,6 +107,23 @@ private fun MainApp() {
     val transactionsViewModel = remember { TransactionsViewModel(repo) }
     val budgetsViewModel = remember { BudgetsViewModel(repo) }
     val settingsViewModel = remember { SettingsViewModel(repo) }
+    val modelStatus by settingsViewModel.modelStatus.collectAsStateWithLifecycle()
+
+    val onboardingPrefs = context.applicationContext.getSharedPreferences(APP_PREFS_NAME, Context.MODE_PRIVATE)
+    var onboardingCompleted by remember(context) {
+        mutableStateOf(onboardingPrefs.getBoolean(KEY_ONBOARDING_COMPLETED, false))
+    }
+
+    if (!onboardingCompleted) {
+        OnboardingFlowScreen(
+            modelStatus = modelStatus,
+            onFinished = {
+                onboardingPrefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, true).apply()
+                onboardingCompleted = true
+            }
+        )
+        return
+    }
 
     var showListenerPermissionDialog by remember { mutableStateOf(false) }
     val postNotificationsPermissionLauncher = rememberLauncherForActivityResult(

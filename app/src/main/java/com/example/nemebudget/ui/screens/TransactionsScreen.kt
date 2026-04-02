@@ -1,9 +1,8 @@
 package com.example.nemebudget.ui.screens
-
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +23,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
@@ -58,23 +58,20 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavController) {
     val transactions by viewModel.filteredTransactions.collectAsStateWithLifecycle()
     val rejectedItems by viewModel.rejectedNotifications.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
     val selected by viewModel.filter.collectAsStateWithLifecycle()
-
     val sectionFormatter = remember { SimpleDateFormat("MMMM d, yyyy", Locale.US) }
     val dateFormatter = remember { SimpleDateFormat("MMM d", Locale.US) }
     val groupedTransactions = remember(transactions) {
         transactions.groupBy { sectionFormatter.format(Date(it.date)) }.toList()
     }
-
     var pendingDeleteTransaction by remember { mutableStateOf<Transaction?>(null) }
     var showAddTransactionSheet by remember { mutableStateOf(false) }
-
+    var editingTransaction by remember { mutableStateOf<Transaction?>(null) }
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -82,94 +79,94 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-        Text("Transactions", style = MaterialTheme.typography.headlineSmall)
-        OutlinedTextField(
-            value = query,
-            onValueChange = viewModel::onSearchQueryChanged,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Search merchant") }
-        )
-
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item {
-                AssistChip(
-                    onClick = { viewModel.onFilterChanged(null) },
-                    label = { Text("All") },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = if (selected == null) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surface
-                        }
-                    )
-                )
+            Text("Transactions", style = MaterialTheme.typography.headlineSmall)
+            Button(onClick = { showAddTransactionSheet = true }) {
+                Text("Add transaction")
             }
-            itemsIndexed(Category.entries) { _, category ->
-                AssistChip(
-                    onClick = { viewModel.onFilterChanged(category) },
-                    label = { Text(category.label) },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = if (selected == category) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surface
-                        }
+            OutlinedTextField(
+                value = query,
+                onValueChange = viewModel::onSearchQueryChanged,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Search merchant") }
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    AssistChip(
+                        onClick = { viewModel.onFilterChanged(null) },
+                        label = { Text("All") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selected == null) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            }
+                        )
                     )
-                )
+                }
+                itemsIndexed(Category.entries) { _, category ->
+                    AssistChip(
+                        onClick = { viewModel.onFilterChanged(category) },
+                        label = { Text(category.label) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selected == category) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            }
+                        )
+                    )
+                }
             }
-        }
-
-        if (rejectedItems.isNotEmpty()) {
-            HorizontalDivider()
-            Text("Errors", style = MaterialTheme.typography.titleMedium)
+            if (rejectedItems.isNotEmpty()) {
+                HorizontalDivider()
+                Text("Errors", style = MaterialTheme.typography.titleMedium)
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(rejectedItems, key = { it.id }) { item ->
+                        RejectedItemRow(
+                            item = item,
+                            onOpen = {
+                                navController.navigate("resolve_error/${item.id}") {
+                                    launchSingleTop = true
+                                }
+                            }
+                        )
+                    }
+                }
+                HorizontalDivider()
+            }
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(160.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(rejectedItems, key = { it.id }) { item ->
-                    RejectedItemRow(
-                        item = item,
-                        onOpen = {
-                            navController.navigate("resolve_error/${item.id}") {
-                                launchSingleTop = true
-                            }
-                        }
-                    )
-                }
-            }
-            HorizontalDivider()
-        }
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            groupedTransactions.forEach { (dateLabel, items) ->
-                stickyHeader {
-                    Text(
-                        text = dateLabel,
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.background)
-                            .padding(vertical = 6.dp)
-                    )
-                }
-                itemsIndexed(items) { _, txn ->
-                    TransactionRow(
-                        transaction = txn,
-                        dateLabel = dateFormatter.format(Date(txn.date)),
-                        onDelete = { pendingDeleteTransaction = txn }
-                    )
+                groupedTransactions.forEach { (dateLabel, items) ->
+                    item {
+                        Text(
+                            text = dateLabel,
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.background)
+                                .padding(vertical = 6.dp)
+                        )
+                    }
+                    itemsIndexed(items) { _, txn ->
+                        TransactionRow(
+                            transaction = txn,
+                            dateLabel = dateFormatter.format(Date(txn.date)),
+                            onEdit = { editingTransaction = txn },
+                            onDelete = { pendingDeleteTransaction = txn }
+                        )
+                    }
                 }
             }
         }
-        }
-
         FloatingActionButton(
             onClick = { showAddTransactionSheet = true },
             modifier = Modifier
@@ -180,7 +177,6 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
             Text("+", style = MaterialTheme.typography.displaySmall)
         }
     }
-
     if (showAddTransactionSheet) {
         AddTransactionBottomSheet(
             onDismiss = { showAddTransactionSheet = false },
@@ -190,7 +186,25 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
             }
         )
     }
-
+    editingTransaction?.let { original ->
+        EditTransactionBottomSheet(
+            original = original,
+            onDismiss = { editingTransaction = null },
+            onDelete = {
+                viewModel.deleteTransaction(original.id)
+                editingTransaction = null
+            },
+            onSave = { merchant, amount, category ->
+                val updated = original.copy(
+                    merchant = merchant,
+                    amount = amount,
+                    category = category
+                )
+                viewModel.saveEdit(original, updated)
+                editingTransaction = null
+            }
+        )
+    }
     pendingDeleteTransaction?.let { txn ->
         AlertDialog(
             onDismissRequest = { pendingDeleteTransaction = null },
@@ -208,76 +222,6 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
         )
     }
 }
-
-@Composable
-@OptIn(ExperimentalMaterial3Api::class)
-private fun AddTransactionBottomSheet(
-    onDismiss: () -> Unit,
-    onSave: (merchant: String, amount: Double, category: Category) -> Unit
-) {
-    var merchant by remember { mutableStateOf("") }
-    var amountInput by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf(Category.OTHER) }
-
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.75f)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text("Add Transaction", style = MaterialTheme.typography.titleLarge)
-            OutlinedTextField(
-                value = merchant,
-                onValueChange = { merchant = it },
-                label = { Text("Merchant") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = amountInput,
-                onValueChange = { amountInput = it },
-                label = { Text("Amount") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Text("Category", style = MaterialTheme.typography.labelLarge)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(Category.entries) { category ->
-                    AssistChip(
-                        onClick = { selectedCategory = category },
-                        label = { Text(category.label) },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = if (selectedCategory == category) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.surface
-                            }
-                        )
-                    )
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-                Button(
-                    onClick = {
-                        val parsed = amountInput.toDoubleOrNull() ?: 0.0
-                        if (parsed > 0.0) {
-                            onSave(merchant, parsed, selectedCategory)
-                        }
-                    },
-                    enabled = amountInput.toDoubleOrNull()?.let { it > 0.0 } == true
-                ) {
-                    Text("Save")
-                }
-            }
-            Spacer(Modifier.size(8.dp))
-        }
-    }
-}
-
 @Composable
 private fun RejectedItemRow(item: RejectedNotification, onOpen: () -> Unit) {
     val formatter = remember { SimpleDateFormat("MMM d, h:mm a", Locale.US) }
@@ -290,18 +234,22 @@ private fun RejectedItemRow(item: RejectedNotification, onOpen: () -> Unit) {
     ) {
         Text(item.title.ifBlank { "(No title)" }, fontWeight = FontWeight.SemiBold)
         Text(item.text, style = MaterialTheme.typography.bodySmall)
-        Text("Reason: ${item.errorMessage}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        Text(
+            "Reason: ${item.errorMessage}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(formatter.format(Date(item.postTimeMillis)), style = MaterialTheme.typography.labelSmall)
             TextButton(onClick = onOpen) { Text("Open") }
         }
     }
 }
-
 @Composable
 private fun TransactionRow(
     transaction: Transaction,
     dateLabel: String,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     val confidenceColor = when {
@@ -309,8 +257,11 @@ private fun TransactionRow(
         transaction.confidence < 0.9f -> Color(0xFFFFB300)
         else -> Color(0xFF2E7D32)
     }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onEdit)
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -342,7 +293,6 @@ private fun TransactionRow(
                     )
                 }
             }
-
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "-$${String.format(Locale.US, "%.2f", transaction.amount)}",
@@ -351,13 +301,12 @@ private fun TransactionRow(
                 )
                 if (transaction.isAiParsed) {
                     Spacer(Modifier.width(6.dp))
-                    Text("\u2728")
+                    Text("?")
                 }
                 Spacer(Modifier.width(6.dp))
-                TextButton(onClick = onDelete) { Text("Delete") }
+                TextButton(onClick = { onDelete() }) { Text("Delete") }
             }
         }
-
         LinearProgressIndicator(
             progress = { transaction.confidence.coerceIn(0f, 1f) },
             modifier = Modifier
@@ -369,4 +318,142 @@ private fun TransactionRow(
         HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
     }
 }
-
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun EditTransactionBottomSheet(
+    original: Transaction,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+    onSave: (merchant: String, amount: Double, category: Category) -> Unit
+) {
+    var merchant by remember(original.id) { mutableStateOf(original.merchant) }
+    var amountInput by remember(original.id) { mutableStateOf(String.format(Locale.US, "%.2f", original.amount)) }
+    var selectedCategory by remember(original.id) { mutableStateOf(original.category) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.8f)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Edit Transaction", style = MaterialTheme.typography.titleLarge)
+            OutlinedTextField(
+                value = merchant,
+                onValueChange = { merchant = it },
+                label = { Text("Merchant") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = amountInput,
+                onValueChange = { amountInput = it },
+                label = { Text("Amount") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("Category", style = MaterialTheme.typography.labelLarge)
+            OutlinedButton(onClick = { menuExpanded = true }) {
+                Text(selectedCategory.label)
+            }
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                Category.entries.forEach { category ->
+                    DropdownMenuItem(
+                        text = { Text(category.label) },
+                        onClick = {
+                            selectedCategory = category
+                            menuExpanded = false
+                        }
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+                Button(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+                Button(
+                    onClick = {
+                        val parsed = amountInput.toDoubleOrNull() ?: original.amount
+                        val safeMerchant = merchant.trim().ifBlank { original.merchant }
+                        onSave(safeMerchant, parsed, selectedCategory)
+                    }
+                ) {
+                    Text("Save")
+                }
+            }
+            Spacer(Modifier.size(6.dp))
+            Text(
+                text = "Correcting transactions teaches category preferences for future parses.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.size(18.dp))
+        }
+    }
+}
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun AddTransactionBottomSheet(
+    onDismiss: () -> Unit,
+    onSave: (merchant: String, amount: Double, category: Category) -> Unit
+) {
+    var merchant by remember { mutableStateOf("") }
+    var amountInput by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf(Category.OTHER) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.8f)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Add Transaction", style = MaterialTheme.typography.titleLarge)
+            OutlinedTextField(
+                value = merchant,
+                onValueChange = { merchant = it },
+                label = { Text("Merchant") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = amountInput,
+                onValueChange = { amountInput = it },
+                label = { Text("Amount") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("Category", style = MaterialTheme.typography.labelLarge)
+            OutlinedButton(onClick = { menuExpanded = true }) {
+                Text(selectedCategory.label)
+            }
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                Category.entries.forEach { category ->
+                    DropdownMenuItem(
+                        text = { Text(category.label) },
+                        onClick = {
+                            selectedCategory = category
+                            menuExpanded = false
+                        }
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+                Button(
+                    onClick = {
+                        val parsedAmount = amountInput.toDoubleOrNull() ?: return@Button
+                        onSave(merchant, parsedAmount, selectedCategory)
+                    }
+                ) {
+                    Text("Add")
+                }
+            }
+            Spacer(Modifier.size(18.dp))
+        }
+    }
+}
