@@ -3,6 +3,47 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-04-02 - AI Assistant (Default Test Notification Updated to Card Guard Sample)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/SettingsScreen.kt`:
+  * Default test notification title now starts as `Card Guard`.
+  * Default test notification text now uses:
+    * `Card Guard Credit Card *3320 $9.13 at SQ *KIWI LOCO FROZEN Y. Tap for details.`
+  * Updated title placeholder and blank-title fallback to `Card Guard` for consistency.
+* Updated `app/src/main/java/com/example/nemebudget/MainActivity.kt`:
+  * LLM Lab default manual input now uses the same Card Guard sample text.
+
+### Why This Was Done
+1. Keeps test data aligned with the real-world format you want to validate.
+2. Ensures Settings test notifications and LLM Lab manual testing start from the same baseline sample.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after defaults update.
+
+## 2026-04-02 - AI Assistant (Money Signal Regex Expansion + Gate Unification)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/pipeline/TransactionalNotificationGate.kt`:
+  * Expanded `MONEY_SIGNAL_REGEX` to cover:
+    * currency prefix (`$45`, `USD 45`),
+    * currency suffix (`45$`, `45 dollars`),
+    * keyword-led numeric fields (`amount: 45`, `payment=45.50`, `spent 45`).
+* Updated `app/src/main/java/com/example/nemebudget/pipeline/NotificationBatchProcessor.kt`:
+  * Removed duplicate local money/action gate constants.
+  * Switched final pre-LLM gate to shared `TransactionalNotificationGate.evaluate(...)` and reason-coded skip logs.
+* Updated `app/src/test/java/com/example/nemebudget/TransactionalNotificationGateTest.kt`:
+  * Added regression coverage for keyword-amount matching and suffix-currency-word matching.
+
+### Why This Was Done
+1. Broader money patterns improve capture of real-world alert formats that omit `$` or use keyword fields.
+2. One shared gate avoids drift between listener/repository/batch paths.
+3. Reason-coded logs make skip decisions easier to tune.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully.
+* Ran `:app:testDebugUnitTest --tests com.example.nemebudget.TransactionalNotificationGateTest` successfully.
+
 ## 2026-04-02 - AI Assistant (Transactions Delete Simplified to Tap-Then-Delete)
 
 ### What Changed

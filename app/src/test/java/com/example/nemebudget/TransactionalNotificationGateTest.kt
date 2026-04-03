@@ -40,5 +40,27 @@ class TransactionalNotificationGateTest {
         assertFalse(decision.passed)
         assertEquals("conversation_or_email_without_bank_context", decision.reason)
     }
+
+    @Test
+    fun passes_for_keyword_amount_pattern_without_currency_symbol() {
+        val decision = TransactionalNotificationGate.evaluate(
+            title = "Payment Update",
+            text = "payment amount: 245.75 posted to your account"
+        )
+
+        assertTrue(decision.passed)
+        assertEquals("passed", decision.reason)
+    }
+
+    @Test
+    fun passes_for_suffix_currency_word_pattern() {
+        val decision = TransactionalNotificationGate.evaluate(
+            title = "Card Alert",
+            text = "Your card was charged 1,234.50 dollars at Hilton"
+        )
+
+        assertTrue(decision.passed)
+        assertEquals("passed", decision.reason)
+    }
 }
 

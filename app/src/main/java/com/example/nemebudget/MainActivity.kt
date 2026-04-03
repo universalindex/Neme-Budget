@@ -260,7 +260,9 @@ private fun MainApp() {
 
 @Composable
 fun LlmTestingScreen(pipeline: LlmPipeline, modifier: Modifier = Modifier) {
-    var rawNotificationInput by remember { mutableStateOf("Chase: You spent $5.40 at Starbucks today.") }
+    var rawNotificationInput by remember {
+        mutableStateOf("Card Guard Credit Card *3320 $9.13 at SQ *KIWI LOCO FROZEN Y. Tap for details.")
+    }
     var outputTransaction by remember { mutableStateOf<ExtractedTransaction?>(null) }
     var rawLlmJsonOutput by remember { mutableStateOf("") }
     var isProcessing by remember { mutableStateOf(false) }

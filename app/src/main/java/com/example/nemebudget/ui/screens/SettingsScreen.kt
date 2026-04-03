@@ -89,8 +89,10 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
     var ruleInput by remember { mutableStateOf("") }
     var showWipeDialog by remember { mutableStateOf(false) }
     var showIgnoreAppsSubmenu by remember { mutableStateOf(false) }
-    var testNotificationTitle by remember { mutableStateOf("Debit Card Alert") }
-    var testNotificationText by remember { mutableStateOf("You spent $45.99 at Starbucks") }
+    var testNotificationTitle by remember { mutableStateOf("America First Alert") }
+    var testNotificationText by remember {
+        mutableStateOf("Card Guard Credit Card *3320 $9.13 at SQ *KIWI LOCO FROZEN Y. Tap for details.")
+    }
     val timeFormatter = remember { SimpleDateFormat("h:mm a", Locale.US) }
     val listenerEnabled = isNotificationListenerEnabled(context)
     val postNotificationsGranted = isPostNotificationsGranted(context)
@@ -293,7 +295,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                 onValueChange = { testNotificationTitle = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Notification title") },
-                placeholder = { Text("Debit Card Alert") },
+                placeholder = { Text("Card Guard") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
             )
         }
@@ -594,7 +596,7 @@ private fun postTestNotification(
         notificationManager.createNotificationChannel(channel)
     }
 
-    val resolvedTitle = notificationTitle.ifBlank { "Debit Card Alert" }
+    val resolvedTitle = notificationTitle.ifBlank { "Card Guard" }
 
     val notification = androidx.core.app.NotificationCompat.Builder(context, "test_bank_channel")
         .setSmallIcon(android.R.drawable.ic_dialog_info)

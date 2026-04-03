@@ -32,7 +32,7 @@ object TransactionalNotificationGate {
     }
 
     private val MONEY_SIGNAL_REGEX = Regex(
-        """((\$|usd\s?)\s?\d{1,3}(,\d{3})*(\.\d{1,2})?|\d{1,3}(,\d{3})*(\.\d{1,2})?\s?(\$|usd|dollars?))"""
+        """((\$|usd\s?)\s?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?|(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?\s?(?:\$|usd|dollars?)|(?:amount|charge|spent|payment|balance)\s?[:=]?\s?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)"""
     )
 
     private val TRANSACTION_ACTION_WORDS = setOf(

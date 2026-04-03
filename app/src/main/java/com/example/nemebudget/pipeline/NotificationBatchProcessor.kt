@@ -10,7 +10,6 @@ import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.model.toDefinition
 import kotlinx.coroutines.flow.Flow
-import java.util.Locale
 
 /**
  * Reads queued encrypted notifications from Room, runs a final transactional gate,
@@ -34,8 +33,10 @@ class NotificationBatchProcessor(
 
         pending.forEach { raw ->
             try {
-                if (!passesFinalTransactionalGate(raw)) {
+                val gate = TransactionalNotificationGate.evaluate(raw.title, raw.text)
+                if (!gate.passed) {
                     skippedCount++
+                    Log.d("BatchProcessor", "Gate skipped rawId=${raw.id}: ${gate.reason}")
                     dao.delete(raw)
                     return@forEach
                 }
@@ -89,13 +90,6 @@ class NotificationBatchProcessor(
         dao.deleteAll()
     }
 
-    private fun passesFinalTransactionalGate(raw: RawNotification): Boolean {
-        val combined = "${raw.title} ${raw.text}".lowercase(Locale.US)
-        val hasMoneySignal = MONEY_REGEX.containsMatchIn(combined)
-        val hasActionSignal = ACTION_WORDS.any { combined.contains(it) }
-        return hasMoneySignal && hasActionSignal
-    }
-
     private fun resolveCategory(label: String): CategoryDefinition {
         return Category.entries.firstOrNull { it.label.equals(label, ignoreCase = true) }
             ?.toDefinition()
@@ -109,12 +103,6 @@ class NotificationBatchProcessor(
         val failedCount: Int
     )
 
-    companion object {
-        private val MONEY_REGEX = Regex("""(\$\s?\d+[\d,]*(\.\d{1,2})?|\d+[\d,]*(\.\d{1,2})?\s?(usd|dollars?))""")
-        private val ACTION_WORDS = setOf(
-            "spent", "purchase", "purchased", "charged", "charge", "paid", "payment", "debit", "credit", "withdrawal"
-        )
-    }
 }
 
 
