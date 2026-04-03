@@ -38,6 +38,7 @@ interface AppRepository {
 
     fun getModelStatus(): Flow<ModelStatus>
     suspend fun markGpuOptimized() // Persists the optimization flag once AOT shader compilation completes
+    suspend fun refreshModelStatus()
 
     suspend fun getTotalTransactionCount(): Int
     suspend fun wipeAllData()

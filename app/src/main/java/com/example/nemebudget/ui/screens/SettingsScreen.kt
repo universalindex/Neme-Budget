@@ -209,7 +209,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
 
         item {
             Text(
-                "Rules are now typed: choose a field, enter what to match, and pick the category. The app applies them after the LLM extracts a transaction.",
+                "Rules are now typed: choose a field, enter what to match, then pick an action (set category or set merchant). The app applies them after LLM extraction.",
                 style = MaterialTheme.typography.bodySmall
             )
         }

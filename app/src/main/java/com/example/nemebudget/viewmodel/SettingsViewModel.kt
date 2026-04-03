@@ -6,6 +6,7 @@ import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.ModelStatus
 import com.example.nemebudget.model.RuleDefinition
+import com.example.nemebudget.model.RuleAction
 import com.example.nemebudget.model.ProcessingState
 import com.example.nemebudget.repository.AppRepository
 import kotlinx.coroutines.Job
@@ -53,6 +54,7 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     private var primaryBankSaveJob: Job? = null
 
     init {
+        refreshModelStatus()
         refreshCount()
     }
 
@@ -62,8 +64,15 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
             val success = pipeline.warmUpEngine()
             if (success) {
                 repo.markGpuOptimized()
+                repo.refreshModelStatus()
             }
             _isOptimizing.value = false
+        }
+    }
+
+    fun refreshModelStatus() {
+        viewModelScope.launch {
+            repo.refreshModelStatus()
         }
     }
 
@@ -102,13 +111,22 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     }
 
     fun addCustomRule(rule: RuleDefinition) {
+        val normalizedRule = if (rule.action == RuleAction.SET_MERCHANT) {
+            rule.copy(matchField = com.example.nemebudget.model.RuleField.RAW_TEXT)
+        } else {
+            rule
+        }
         val current = settings.value
         if (current.customRules.any { existing ->
-                existing.matchField == rule.matchField &&
-                    existing.query.equals(rule.query, ignoreCase = true) &&
-                    existing.targetCategory.equals(rule.targetCategory, ignoreCase = true)
+                existing.matchField == normalizedRule.matchField &&
+                    existing.query.equals(normalizedRule.query, ignoreCase = true) &&
+                    existing.action == normalizedRule.action &&
+                    ((normalizedRule.action == RuleAction.SET_CATEGORY &&
+                        existing.targetCategory.equals(normalizedRule.targetCategory, ignoreCase = true)) ||
+                        (normalizedRule.action == RuleAction.SET_MERCHANT &&
+                            existing.forcedMerchant.orEmpty().equals(normalizedRule.forcedMerchant.orEmpty(), ignoreCase = true)))
             }) return
-        saveSettings(current.copy(customRules = current.customRules + rule))
+        saveSettings(current.copy(customRules = current.customRules + normalizedRule))
     }
 
     fun removeCustomRule(rule: RuleDefinition) {

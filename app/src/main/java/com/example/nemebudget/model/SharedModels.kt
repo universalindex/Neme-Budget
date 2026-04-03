@@ -65,13 +65,26 @@ enum class RuleField(val label: String) {
     RAW_TEXT("Notification text")
 }
 
+enum class RuleAction(val label: String) {
+    SET_CATEGORY("Set Category"),
+    SET_MERCHANT("Set Merchant")
+}
+
 data class RuleDefinition(
     val id: String,
     val matchField: RuleField,
     val query: String,
-    val targetCategory: String
+    val targetCategory: String = "Other",
+    val action: RuleAction = RuleAction.SET_CATEGORY,
+    val forcedMerchant: String? = null
 ) {
-    fun displayLabel(): String = "${matchField.label}: $query → $targetCategory"
+    fun displayLabel(): String {
+        val outcome = when (action) {
+            RuleAction.SET_CATEGORY -> "Category: $targetCategory"
+            RuleAction.SET_MERCHANT -> "Merchant: ${forcedMerchant?.ifBlank { "(missing)" } ?: "(missing)"}"
+        }
+        return "${matchField.label}: $query -> $outcome"
+    }
 }
 
 fun Category.toDefinition(): CategoryDefinition = CategoryDefinition(

@@ -1,6 +1,7 @@
 package com.example.nemebudget.llm
 
 import com.example.nemebudget.model.RuleDefinition
+import com.example.nemebudget.model.RuleAction
 import com.example.nemebudget.model.RuleField
 
 internal data class RuleApplicationResult(
@@ -18,8 +19,13 @@ internal fun applyRuleDefinitions(
         ruleMatches(rule, rawNotification, merchant)
     } ?: return RuleApplicationResult(transaction)
 
+    val updatedTransaction = when (match.action) {
+        RuleAction.SET_CATEGORY -> transaction.copy(category = match.targetCategory)
+        RuleAction.SET_MERCHANT -> transaction.copy(merchant = match.forcedMerchant?.trim().orEmpty().ifBlank { transaction.merchant })
+    }
+
     return RuleApplicationResult(
-        transaction = transaction.copy(category = match.targetCategory),
+        transaction = updatedTransaction,
         appliedRule = match
     )
 }

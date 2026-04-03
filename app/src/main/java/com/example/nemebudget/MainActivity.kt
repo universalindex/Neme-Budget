@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -42,7 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.TextButton
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -127,9 +127,65 @@ private fun MainApp() {
         mutableStateOf(onboardingPrefs.getBoolean(KEY_ONBOARDING_COMPLETED, false))
     }
 
+    var showListenerPermissionDialog by remember { mutableStateOf(false) }
+    var showModelImportDialog by remember { mutableStateOf(false) }
+    var modelImportError by remember { mutableStateOf<String?>(null) }
+    var isImportingModel by remember { mutableStateOf(false) }
+    val appScope = rememberCoroutineScope()
+
+    val modelZipPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+
+        appScope.launch {
+            isImportingModel = true
+            val installed = pipeline.installModelFromZipUri(uri)
+            isImportingModel = false
+
+            if (installed) {
+                settingsViewModel.refreshModelStatus()
+                modelImportError = null
+                showModelImportDialog = false
+            } else {
+                modelImportError = "Could not install model from selected ZIP. Verify it contains mlc-chat-config.json."
+            }
+        }
+    }
+
+    val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            modelImportError = null
+            modelZipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+        } else {
+            modelImportError = "Storage permission denied. Can't scan Downloads automatically on this Android version."
+        }
+    }
+
+    fun launchModelZipPicker() {
+        if (needsLegacyStoragePermission() && !isLegacyStoragePermissionGranted(context)) {
+            legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        } else {
+            modelImportError = null
+            modelZipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+        }
+    }
+
     if (!onboardingCompleted) {
         OnboardingFlowScreen(
             modelStatus = modelStatus,
+            isImportingModel = isImportingModel,
+            modelImportError = modelImportError,
+            onSelectModelZip = { launchModelZipPicker() },
             onFinished = {
                 onboardingPrefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, true).apply()
                 onboardingCompleted = true
@@ -138,17 +194,22 @@ private fun MainApp() {
         return
     }
 
-    var showListenerPermissionDialog by remember { mutableStateOf(false) }
     val postNotificationsPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { /* no-op: status is checked on recomposition */ }
+
     LaunchedEffect(Unit) {
+        settingsViewModel.refreshModelStatus()
         settingsViewModel.processOnAppOpenIfNeeded()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !isPostNotificationsGranted(context)) {
             postNotificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         if (!isNotificationListenerEnabled(context)) {
             showListenerPermissionDialog = true
+        }
+        if (!pipeline.isModelInstalled()) {
+            showModelImportDialog = true
         }
     }
 
@@ -261,6 +322,46 @@ private fun MainApp() {
             dismissButton = {
                 TextButton(onClick = { showListenerPermissionDialog = false }) {
                     Text("Not Now")
+                }
+            }
+        )
+    }
+
+    if (showModelImportDialog && !pipeline.isModelInstalled()) {
+        AlertDialog(
+            onDismissRequest = { showModelImportDialog = false },
+            title = { Text("Model Setup Needed") },
+            text = {
+                Text(
+                    "The local model folder is missing. Select your model ZIP (for example, Qwen3-o.6B-q4f16-MLC.zip) so the app can install it into internal storage."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isImportingModel,
+                    onClick = {
+                        launchModelZipPicker()
+                    }
+                ) {
+                    Text(if (isImportingModel) "Installing..." else "Select ZIP")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showModelImportDialog = false }) {
+                    Text("Not Now")
+                }
+            }
+        )
+    }
+
+    modelImportError?.let { message ->
+        AlertDialog(
+            onDismissRequest = { modelImportError = null },
+            title = { Text("Model Import Failed") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { modelImportError = null }) {
+                    Text("OK")
                 }
             }
         )
@@ -386,6 +487,15 @@ private fun isPostNotificationsGranted(context: Context): Boolean {
     } else {
         true
     }
+}
+
+private fun needsLegacyStoragePermission(): Boolean {
+    return Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2
+}
+
+private fun isLegacyStoragePermissionGranted(context: Context): Boolean {
+    if (!needsLegacyStoragePermission()) return true
+    return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
 }
 
 private fun isNotificationListenerEnabled(context: Context): Boolean {

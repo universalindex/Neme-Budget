@@ -3,9 +3,12 @@ package com.example.nemebudget.llm
 import ai.mlc.mlcllm.MLCEngine
 import ai.mlc.mlcllm.OpenAIProtocol
 import android.content.Context
+import android.net.Uri
+import android.os.Environment
 import android.util.Log
 import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.RuleAction
 import com.example.nemebudget.model.RuleDefinition
 import com.example.nemebudget.model.RuleField
 import com.example.nemebudget.model.toDefinition
@@ -37,8 +40,12 @@ data class ExtractionResult(
 
 class LlmPipeline(private val context: Context) {
 
+    private companion object {
+        const val MODEL_FOLDER_NAME = "Qwen3-0.6B-q4f16_1-MLC"
+    }
+
     private val modelPath: String
-        get() = File(context.filesDir, "Qwen3-0.6B-q4f16_1-MLC").absolutePath
+        get() = File(context.filesDir, MODEL_FOLDER_NAME).absolutePath
 
     private val modelLib = "qwen3_q4f16_1"
 
@@ -77,31 +84,67 @@ class LlmPipeline(private val context: Context) {
     }
 
     private val systemPrompt = """
-You extract a single financial transaction from a raw mobile notification.
-
-Output requirements:
-- Return exactly one JSON object with keys: merchant, amount, category.
-Extraction rules for confusing notifications:
-1) Merchant
-   - Prefer the payee/store/counterparty near words like "at", "from", "to", "merchant", or "payee".
-   - Ignore card masks, OTP codes, balances, and reference IDs.
-2) Amount
-   - Extract the transaction amount that was charged/spent/debited/paid/credited.
-   - Ignore available balance, remaining limit, rewards, and account-ending digits.
-   - If multiple amounts exist, choose the one tied to the transaction action.
-3) Category
-   - Map to the closest allowed category; use "Other" if uncertain.
-
-If the notification is not clearly a transaction, return:
-{"merchant":"Error","amount":0.0,"category":"Other"}
+Extract the transaction from the notification.
+Rules:
+    Merchant: Prioritize store/payee names. Exclude card/reference numbers.
+    Amount: Use the transaction value. Ignore balances or limits.
+    Category: Select the most relevant category or "Other".
+    Fallback: If no transaction is found, return "Error" for merchant and 0.0 for amount.
+Example:
+Notification: America First Alert: Card Guard Credit Card *3320 $9.13 at SQ *Kiwi Loco Frozen Y.
+Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
 """.trimIndent()
 
     private var mlcEngine: MLCEngine? = null
+
+    fun isModelInstalled(): Boolean {
+        return ModelArchiveInstaller.isModelReady(File(modelPath))
+    }
+
+    suspend fun installModelFromZipUri(zipUri: Uri): Boolean = withContext(Dispatchers.IO) {
+        val input = runCatching { context.contentResolver.openInputStream(zipUri) }.getOrNull() ?: return@withContext false
+        input.use { stream ->
+            ModelArchiveInstaller.installFromZipStream(
+                zipStream = stream,
+                targetDir = File(modelPath),
+                modelName = MODEL_FOLDER_NAME
+            )
+        }
+    }
+
+    private fun ensureModelAvailable(): Boolean {
+        val modelDir = File(modelPath)
+        if (isModelInstalled()) {
+            return true
+        }
+
+        val downloadRoots = buildList {
+            runCatching { Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS) }
+                .getOrNull()
+                ?.let { add(it) }
+            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let { add(it) }
+        }
+
+        for (downloadsRoot in downloadRoots) {
+            val matchingZip = ModelArchiveInstaller.findMatchingZip(downloadsRoot, MODEL_FOLDER_NAME)
+            if (matchingZip != null) {
+                Log.d("LlmPipeline", "Model folder missing; installing from ZIP at '${matchingZip.absolutePath}'")
+                return ModelArchiveInstaller.installFromZip(matchingZip, modelDir, MODEL_FOLDER_NAME)
+            }
+        }
+
+        Log.w("LlmPipeline", "Model folder missing and no matching ZIP archive was found in Downloads.")
+        return false
+    }
 
     private fun loadEngine() {
         if (mlcEngine != null) {
             Log.d("LlmPipeline", "MLC Engine already loaded.")
             return
+        }
+
+        if (!ensureModelAvailable()) {
+            throw IllegalStateException("Missing MLC model files for '$MODEL_FOLDER_NAME' and no installable ZIP archive was found.")
         }
         
         Log.d("LlmPipeline", "WAKING UP ENGINE: Attempting to load Qwen with lib '${modelLib}' from path '${modelPath}'")
@@ -190,10 +233,6 @@ If the notification is not clearly a transaction, return:
      * The core LLM generation call.
      */
     private suspend fun generateJson(userPrompt: String): String {
-        val modelDir = File(modelPath)
-        if (!modelDir.exists() || !modelDir.isDirectory) {
-            return """{"merchant": "Error", "amount": 0.0, "category": "Other"}"""
-        }
 
         var llmJsonString = """{"merchant": "Error", "amount": 0.0, "category": "Other"}"""
         try {
@@ -276,9 +315,12 @@ If the notification is not clearly a transaction, return:
             var notes = ruleResult.appliedRule?.let { "Rule matched: ${it.displayLabel()}. " } ?: ""
             val rawLower = rawNotification.lowercase(Locale.ROOT)
 
-            if (candidate.merchant != "Unknown" && candidate.merchant != "Error" && !merchantAppearsInRaw(rawLower, candidate.merchant)) {
+            val merchantForcedByRule = ruleResult.appliedRule?.action == RuleAction.SET_MERCHANT
+            if (!merchantForcedByRule && candidate.merchant != "Unknown" && candidate.merchant != "Error" && !merchantAppearsInRaw(rawLower, candidate.merchant)) {
                 isVerified = false
                 notes += "FAILED: Merchant '${candidate.merchant}' not found in original text."
+            } else if (merchantForcedByRule) {
+                notes += "Merchant forced by rule. "
             }
 
             val amountString = candidate.amount.toString()
@@ -465,9 +507,23 @@ Correction rules:
                         val id = item.optString("id").ifBlank { continue }
                         val field = runCatching { RuleField.valueOf(item.optString("matchField")) }.getOrNull() ?: continue
                         val query = item.optString("query").trim()
-                        val targetCategory = item.optString("targetCategory").trim()
-                        if (query.isBlank() || targetCategory.isBlank()) continue
-                        add(RuleDefinition(id = id, matchField = field, query = query, targetCategory = targetCategory))
+                        val action = runCatching {
+                            RuleAction.valueOf(item.optString("action", RuleAction.SET_CATEGORY.name))
+                        }.getOrDefault(RuleAction.SET_CATEGORY)
+                        val targetCategory = item.optString("targetCategory", "Other").trim().ifBlank { "Other" }
+                        val forcedMerchant = item.optString("forcedMerchant").trim().ifBlank { null }
+                        if (query.isBlank()) continue
+                        if (action == RuleAction.SET_MERCHANT && forcedMerchant.isNullOrBlank()) continue
+                        add(
+                            RuleDefinition(
+                                id = id,
+                                matchField = field,
+                                query = query,
+                                targetCategory = targetCategory,
+                                action = action,
+                                forcedMerchant = forcedMerchant
+                            )
+                        )
                     }
                     is String -> {
                         parseLegacyRuleString(item)?.let { add(it) }
@@ -489,7 +545,9 @@ Correction rules:
             id = "legacy_${trimmed.hashCode()}",
             matchField = RuleField.MERCHANT,
             query = query,
-            targetCategory = targetCategory
+            targetCategory = targetCategory,
+            action = RuleAction.SET_CATEGORY,
+            forcedMerchant = null
         )
     }
 

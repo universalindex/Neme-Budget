@@ -266,6 +266,10 @@ class FakeRepository(
         modelStatusFlow.value = modelStatusFlow.value.copy(isGpuOptimized = true)
     }
 
+    override suspend fun refreshModelStatus() {
+        modelStatusFlow.value = modelStatusFlow.value
+    }
+
     override suspend fun getTotalTransactionCount(): Int = transactionsFlow.value.size
 
     override suspend fun wipeAllData() {

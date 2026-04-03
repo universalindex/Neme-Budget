@@ -21,6 +21,7 @@ import com.example.nemebudget.model.CategoryPresentation
 import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.CustomBudgetCategory
 import com.example.nemebudget.model.ModelStatus
+import com.example.nemebudget.model.RuleAction
 import com.example.nemebudget.model.RuleDefinition
 import com.example.nemebudget.model.RuleField
 import com.example.nemebudget.model.RejectedNotification
@@ -37,6 +38,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -64,15 +66,9 @@ class RealRepository(
     private val TAG = "RealRepository"
     private val prefs = context.applicationContext.getSharedPreferences("nemebudget_prefs", Context.MODE_PRIVATE)
     private val gpuOptimizedKey = "gpu_optimized"
+    private val modelFingerprintKey = "model_fingerprint"
     private val settingsKey = "app_settings_json"
-    private val modelStatusFlow = kotlinx.coroutines.flow.MutableStateFlow(
-        ModelStatus(
-            isDownloaded = true,
-            downloadProgress = 1f,
-            modelSizeLabel = "0.6 GB",
-            isGpuOptimized = prefs.getBoolean(gpuOptimizedKey, false)
-        )
-    )
+    private val modelStatusFlow = kotlinx.coroutines.flow.MutableStateFlow(buildCurrentModelStatus())
 
     // Persisted in SharedPreferences for now so budget edits survive app restarts without a schema migration.
     private val settingsFlow = MutableStateFlow(loadAppSettingsFromPrefs())
@@ -425,8 +421,14 @@ class RealRepository(
     override fun getModelStatus(): Flow<ModelStatus> = modelStatusFlow
 
     override suspend fun markGpuOptimized() {
-        prefs.edit().putBoolean(gpuOptimizedKey, true).apply()
+        val editor = prefs.edit().putBoolean(gpuOptimizedKey, true)
+        computeModelFingerprint()?.let { editor.putString(modelFingerprintKey, it) }
+        editor.apply()
         modelStatusFlow.value = modelStatusFlow.value.copy(isGpuOptimized = true)
+    }
+
+    override suspend fun refreshModelStatus() {
+        modelStatusFlow.value = buildCurrentModelStatus()
     }
 
     override suspend fun getTotalTransactionCount(): Int {
@@ -437,7 +439,7 @@ class RealRepository(
         db.clearAllTables()
         prefs.edit().clear().apply()
         settingsFlow.value = AppSettings()
-        modelStatusFlow.value = modelStatusFlow.value.copy(isGpuOptimized = false)
+        modelStatusFlow.value = buildCurrentModelStatus()
     }
 
     override suspend fun exportToCsv(): String {
@@ -589,6 +591,8 @@ class RealRepository(
                         put("matchField", rule.matchField.name)
                         put("query", rule.query)
                         put("targetCategory", rule.targetCategory)
+                        put("action", rule.action.name)
+                        put("forcedMerchant", rule.forcedMerchant)
                     })
                 }
             })
@@ -636,9 +640,23 @@ class RealRepository(
                         val id = item.optString("id").ifBlank { continue }
                         val field = runCatching { RuleField.valueOf(item.optString("matchField")) }.getOrNull() ?: continue
                         val query = item.optString("query").trim()
-                        val targetCategory = item.optString("targetCategory").trim()
-                        if (query.isBlank() || targetCategory.isBlank()) continue
-                        add(RuleDefinition(id = id, matchField = field, query = query, targetCategory = targetCategory))
+                        val action = runCatching {
+                            RuleAction.valueOf(item.optString("action", RuleAction.SET_CATEGORY.name))
+                        }.getOrDefault(RuleAction.SET_CATEGORY)
+                        val targetCategory = item.optString("targetCategory", "Other").trim().ifBlank { "Other" }
+                        val forcedMerchant = item.optString("forcedMerchant").trim().ifBlank { null }
+                        if (query.isBlank()) continue
+                        if (action == RuleAction.SET_MERCHANT && forcedMerchant.isNullOrBlank()) continue
+                        add(
+                            RuleDefinition(
+                                id = id,
+                                matchField = field,
+                                query = query,
+                                targetCategory = targetCategory,
+                                action = action,
+                                forcedMerchant = forcedMerchant
+                            )
+                        )
                     }
                     is String -> {
                         parseLegacyRule(item)?.let { add(it) }
@@ -660,8 +678,48 @@ class RealRepository(
             id = "legacy_${trimmed.hashCode()}",
             matchField = RuleField.MERCHANT,
             query = query,
-            targetCategory = targetCategory
+            targetCategory = targetCategory,
+            action = RuleAction.SET_CATEGORY,
+            forcedMerchant = null
         )
+    }
+
+    private fun buildCurrentModelStatus(): ModelStatus {
+        val isInstalled = llmPipeline.isModelInstalled()
+        if (!isInstalled) {
+            prefs.edit().putBoolean(gpuOptimizedKey, false).apply()
+            return ModelStatus(
+                isDownloaded = false,
+                downloadProgress = 0f,
+                modelSizeLabel = "0.6 GB",
+                isGpuOptimized = false
+            )
+        }
+
+        val currentFingerprint = computeModelFingerprint()
+        val storedFingerprint = prefs.getString(modelFingerprintKey, null)
+        var gpuOptimized = prefs.getBoolean(gpuOptimizedKey, false)
+        if (storedFingerprint != null && currentFingerprint != null && storedFingerprint != currentFingerprint && gpuOptimized) {
+            gpuOptimized = false
+            prefs.edit().putBoolean(gpuOptimizedKey, false).apply()
+        }
+        if (currentFingerprint != null) {
+            prefs.edit().putString(modelFingerprintKey, currentFingerprint).apply()
+        }
+
+        return ModelStatus(
+            isDownloaded = true,
+            downloadProgress = 1f,
+            modelSizeLabel = "0.6 GB",
+            isGpuOptimized = gpuOptimized
+        )
+    }
+
+    private fun computeModelFingerprint(): String? {
+        val modelDir = File(context.filesDir, "Qwen3-0.6B-q4f16_1-MLC")
+        val sentinel = File(modelDir, "mlc-chat-config.json")
+        if (!sentinel.isFile) return null
+        return "${sentinel.length()}_${sentinel.lastModified()}"
     }
 }
 

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +44,9 @@ import kotlinx.coroutines.delay
 @Composable
 fun OnboardingFlowScreen(
     modelStatus: ModelStatus,
+    isImportingModel: Boolean,
+    modelImportError: String?,
+    onSelectModelZip: () -> Unit,
     onFinished: () -> Unit
 ) {
     val context = LocalContext.current
@@ -83,6 +87,9 @@ fun OnboardingFlowScreen(
         )
         else -> OnboardingModelScreen(
             modelStatus = modelStatus,
+            isImportingModel = isImportingModel,
+            modelImportError = modelImportError,
+            onSelectModelZip = onSelectModelZip,
             onReady = onFinished
         )
     }
@@ -189,6 +196,9 @@ private fun PermissionStatusRow(label: String, granted: Boolean) {
 @Composable
 fun OnboardingModelScreen(
     modelStatus: ModelStatus,
+    isImportingModel: Boolean,
+    modelImportError: String?,
+    onSelectModelZip: () -> Unit,
     onReady: () -> Unit
 ) {
     LaunchedEffect(modelStatus.isDownloaded) {
@@ -213,7 +223,7 @@ fun OnboardingModelScreen(
             ) {
                 Text("Preparing on-device AI", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Downloading Qwen AI to your device. This only happens once.",
+                    "Select your local Qwen ZIP so Neme can install on-device AI. This only happens once.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 LinearProgressIndicator(
@@ -224,10 +234,30 @@ fun OnboardingModelScreen(
                     if (modelStatus.isDownloaded) {
                         "Model ready (${modelStatus.modelSizeLabel})"
                     } else {
-                        "${(progress * 100).toInt()}% (${modelStatus.modelSizeLabel})"
+                        "Waiting for model ZIP (${modelStatus.modelSizeLabel})"
                     },
                     style = MaterialTheme.typography.bodySmall
                 )
+                if (!modelStatus.isDownloaded) {
+                    Button(
+                        onClick = onSelectModelZip,
+                        enabled = !isImportingModel,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isImportingModel) {
+                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.padding(horizontal = 4.dp))
+                        }
+                        Text(if (isImportingModel) "Installing Model..." else "Select Model ZIP")
+                    }
+                }
+                modelImportError?.takeIf { it.isNotBlank() }?.let { errorText ->
+                    Text(
+                        text = errorText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
     }

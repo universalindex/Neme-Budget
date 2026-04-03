@@ -3,6 +3,70 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-04-03 - AI Assistant (Truth-Based Model Status + Merchant Override Rules)
+
+### What Changed
+* Updated model status plumbing to be truth-based instead of optimistic:
+  * `AppRepository` now includes `refreshModelStatus()`.
+  * `RealRepository` now derives `ModelStatus` from actual model files (`llmPipeline.isModelInstalled()`), not hardcoded downloaded state.
+  * `RealRepository` now fingerprints model files and invalidates `isGpuOptimized` when a new model archive replaces the old snapshot.
+  * `SettingsViewModel` and `MainActivity` now refresh model status at app start and right after ZIP import.
+* Extended rule schema and execution for deterministic merchant forcing:
+  * Added `RuleAction` (`SET_CATEGORY`, `SET_MERCHANT`) and `forcedMerchant` on `RuleDefinition`.
+  * Updated JSON persistence/parsing in `RealRepository` and `LlmPipeline` to support the new fields while staying backward-compatible with existing saved rules.
+  * Updated `RuleEngine` to apply either category override or merchant override based on action.
+  * Updated `LlmPipeline` verification so merchant-forced rules do not fail merchant-in-raw validation.
+* Updated rule UX in `ManageRulesScreen`:
+  * users can choose action type,
+  * if action is `Set Merchant`, a typed merchant input is required before save,
+  * rule cards/search now reflect both category and merchant outcomes.
+* Tightened rule consistency rules so `Set Merchant` can only match against notification text:
+  * in `ManageRulesScreen`, `Merchant` match field is disabled for `Set Merchant` action,
+  * selecting `Set Merchant` auto-forces match field to `Notification text`,
+  * `SettingsViewModel` normalizes incoming merchant-action rules to `RAW_TEXT` as a safety guard.
+* Updated onboarding model setup (`OnboardingScreens.kt` + `MainActivity.kt`) so the **Preparing on-device AI** step includes a `Select Model ZIP` action that uses the same ZIP import/install flow as the main app and shows import errors inline.
+* Added unit tests in `app/src/test/java/com/example/nemebudget/llm/RuleEngineTest.kt` for category override, merchant override, and no-match behavior.
+
+### Why This Was Done
+1. Model status should reflect real device state so users are not told shaders are optimized when a fresh model ZIP was just installed.
+2. Notification-driven rules need to support forcing merchant names, not only categories, to handle noisy vendor strings deterministically.
+3. Keeping parsing backward-compatible preserves existing user rules while enabling richer rule actions.
+
+### Verification
+* Ran `:app:testDebugUnitTest --tests com.example.nemebudget.llm.RuleEngineTest --tests com.example.nemebudget.llm.ModelArchiveInstallerTest` successfully.
+* Ran `:app:assembleDebug` successfully.
+* Re-ran `:app:testDebugUnitTest --tests com.example.nemebudget.llm.RuleEngineTest` successfully after onboarding/rule-field lock follow-up.
+* Re-ran `:app:assembleDebug` successfully after onboarding/rule-field lock follow-up.
+
+## 2026-04-03 - AI Assistant (Auto-Install MLC Model ZIP From Downloads)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt` so the MLC model no longer fails immediately when `/data/data/com.example.nemebudget/files/Qwen3-0.6B-q4f16_1-MLC` is missing.
+* Added `app/src/main/java/com/example/nemebudget/llm/ModelArchiveInstaller.kt` to:
+  * find a matching `Qwen3-0.6B-q4f16_1-MLC.zip` archive in Downloads,
+  * extract it safely into the app files directory,
+  * verify the extracted model using `mlc-chat-config.json` as a sentinel file.
+* Expanded ZIP matching logic to accept real-world filename variants such as `Qwen3-o.6B-q4f16-MLC.zip` (letter `o`, separator differences, optional suffix differences).
+* Added stream-based archive install support so ZIP files selected via Android's document picker can still be installed.
+* Hardened the Downloads scan so inaccessible folders are treated as missing instead of crashing on permission/scoped-storage errors.
+* Updated `app/src/main/java/com/example/nemebudget/MainActivity.kt` with a launch-time model setup dialog that:
+  * requests legacy storage permission on Android 12L and below,
+  * opens a ZIP picker,
+  * installs the selected model archive into app-internal storage.
+* Updated `app/src/main/AndroidManifest.xml` to declare `READ_EXTERNAL_STORAGE` with `maxSdkVersion="32"` for legacy Downloads scanning.
+* Added JVM tests in `app/src/test/java/com/example/nemebudget/llm/ModelArchiveInstallerTest.kt` for nested-folder and flat-archive ZIP layouts.
+
+### Why This Was Done
+1. The model folder is the real prerequisite for MLC loading, so the app should recover from a missing folder instead of only erroring out.
+2. A Downloads ZIP fallback makes setup easier when the model is delivered as an archive rather than pre-extracted files.
+3. The sentinel-file check avoids treating empty or partial directories as a valid model install.
+4. Real user archive names can vary slightly, so matching must be tolerant enough to still find the correct model package.
+5. Android scoped storage can block direct filesystem scans, so launch-time permission/picker UX provides a deterministic recovery path.
+
+### Verification
+* Ran `:app:testDebugUnitTest --tests com.example.nemebudget.llm.ModelArchiveInstallerTest` successfully.
+* Ran `:app:assembleDebug` successfully.
+
 ## 2026-04-02 - AI Assistant (Settings Cleanup + Rule Editing UX)
 
 ### What Changed
