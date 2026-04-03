@@ -6,12 +6,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,11 +23,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Scaffold
@@ -34,10 +38,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
@@ -49,9 +55,9 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 private const val CATEGORY_LABEL_MAX_LENGTH = 50
-private val CATEGORY_LABEL_ALLOWED = Regex("""^[A-Za-z0-9 !@#\$%^&*()_+\-:;.,/?]*$""")
+private val CATEGORY_LABEL_ALLOWED = Regex("""^[A-Za-z0-9 !@#$%^&*()_+\-:;.,/?]*$""")
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun BudgetsScreen(viewModel: BudgetsViewModel) {
     val budgets by viewModel.budgets.collectAsStateWithLifecycle()
@@ -60,12 +66,8 @@ fun BudgetsScreen(viewModel: BudgetsViewModel) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var selectedForActions by remember { mutableStateOf<Budget?>(null) }
-    var editingMetaBudget by remember { mutableStateOf<Budget?>(null) }
+    var editingBudget by remember { mutableStateOf<Budget?>(null) }
     var showingAddCustomDialog by remember { mutableStateOf(false) }
-
-    var inlineEditingBudgetId by remember { mutableStateOf<String?>(null) }
-    var inlineLimitDraft by remember { mutableStateOf("") }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -115,88 +117,35 @@ fun BudgetsScreen(viewModel: BudgetsViewModel) {
             items(budgets, key = { it.id }) { budget ->
                 BudgetCard(
                     budget = budget,
-                    modifier = Modifier.combinedClickable(
-                        onClick = {
-                            inlineEditingBudgetId = budget.id
-                            inlineLimitDraft = String.format(Locale.US, "%.2f", budget.limit)
-                        },
-                        onLongClick = { selectedForActions = budget }
-                    ),
-                    isEditing = inlineEditingBudgetId == budget.id,
-                    limitDraft = if (inlineEditingBudgetId == budget.id) inlineLimitDraft else "",
-                    onLimitDraftChange = { inlineLimitDraft = it },
-                    onSaveLimit = { parsedLimit ->
-                        viewModel.upsertBudget(budget.copy(limit = parsedLimit))
-                        inlineEditingBudgetId = null
-                        scope.launch {
-                            snackbarHostState.showSnackbar("Saved ${budget.label} budget")
-                        }
-                    },
-                    onCancelEdit = { inlineEditingBudgetId = null }
+                    modifier = Modifier.clickable { editingBudget = budget }
                 )
             }
         }
     }
 
-    selectedForActions?.let { selected ->
-        AlertDialog(
-            onDismissRequest = { selectedForActions = null },
-            title = { Text("Category Actions") },
-            text = {
-                Text(
-                    if (selected.isCustom) {
-                        "${selected.label}: edit label/icon, edit limit inline, or delete this custom category."
-                    } else {
-                        "${selected.label}: edit label/icon, edit limit inline, or reset limit to default."
-                    }
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        editingMetaBudget = selected
-                        selectedForActions = null
-                    }
-                ) {
-                    Text("Edit label/icon")
-                }
-            },
-            dismissButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = {
-                        inlineEditingBudgetId = selected.id
-                        inlineLimitDraft = String.format(Locale.US, "%.2f", selected.limit)
-                        selectedForActions = null
-                    }) {
-                        Text("Edit limit")
-                    }
-                    TextButton(onClick = {
-                        if (selected.isCustom) {
-                            viewModel.deleteCustomCategory(selected.id)
-                        } else {
-                            selected.category?.let(viewModel::deleteBudget)
-                        }
-                        selectedForActions = null
-                    }) {
-                        Text(if (selected.isCustom) "Delete" else "Reset")
-                    }
-                    TextButton(onClick = { selectedForActions = null }) {
-                        Text("Cancel")
-                    }
-                }
-            }
-        )
-    }
-
-    editingMetaBudget?.let { budget ->
-        CategoryMetaEditorDialog(
+    editingBudget?.let { budget ->
+        BudgetEditBottomSheet(
             budget = budget,
-            onDismiss = { editingMetaBudget = null },
-            onSave = { label, emoji ->
-                viewModel.updateBudgetCategoryMeta(budget.id, label, emoji)
-                editingMetaBudget = null
+            onDismiss = { editingBudget = null },
+            onSave = { updatedBudget, newLabel, newEmoji ->
+                viewModel.upsertBudget(updatedBudget)
+                if (newLabel != budget.label || newEmoji != budget.emoji) {
+                    viewModel.updateBudgetCategoryMeta(budget.id, newLabel, newEmoji)
+                }
+                editingBudget = null
                 scope.launch {
-                    snackbarHostState.showSnackbar("Updated ${budget.label}")
+                    snackbarHostState.showSnackbar("Saved ${budget.label} budget")
+                }
+            },
+            onDelete = { budgetToDelete ->
+                if (budgetToDelete.isCustom) {
+                    viewModel.deleteCustomCategory(budgetToDelete.id)
+                } else {
+                    budgetToDelete.category?.let(viewModel::deleteBudget)
+                }
+                editingBudget = null
+                scope.launch {
+                    snackbarHostState.showSnackbar("Deleted ${budgetToDelete.label}")
                 }
             }
         )
@@ -219,11 +168,6 @@ fun BudgetsScreen(viewModel: BudgetsViewModel) {
 @Composable
 private fun BudgetCard(
     budget: Budget,
-    isEditing: Boolean,
-    limitDraft: String,
-    onLimitDraftChange: (String) -> Unit,
-    onSaveLimit: (Double) -> Unit,
-    onCancelEdit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val safeLimit = budget.limit.coerceAtLeast(0.01)
@@ -243,95 +187,175 @@ private fun BudgetCard(
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("${budget.emoji} ${budget.label}")
-                if (!isEditing) {
-                    Text("$${String.format(Locale.US, "%.2f", budget.spent)} / $${String.format(Locale.US, "%.2f", budget.limit)}")
-                } else {
-                    Text("Editing limit", color = MaterialTheme.colorScheme.primary)
-                }
+                Text("$${String.format(Locale.US, "%.2f", budget.spent)} / $${String.format(Locale.US, "%.2f", budget.limit)}")
             }
-            if (isEditing) {
-                val parsedLimit = limitDraft.toDoubleOrNull()
-                val isValid = parsedLimit != null && parsedLimit > 0.0
-                OutlinedTextField(
-                    value = limitDraft,
-                    onValueChange = onLimitDraftChange,
-                    label = { Text("Budget limit") },
-                    supportingText = {
-                        Text(if (isValid) "Enter a positive dollar amount." else "Limit must be a number greater than zero.")
-                    },
-                    isError = limitDraft.isNotBlank() && !isValid,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = onCancelEdit) { Text("Cancel") }
-                    TextButton(onClick = { parsedLimit?.let(onSaveLimit) }, enabled = isValid) { Text("Save") }
-                }
-            } else {
-                LinearProgressIndicator(
-                    progress = { animatedProgress },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = animatedColor,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-                Text(
-                    text = if (budget.isCustom) {
-                        "Custom category. Tap amount to edit limit. Long-press to rename or delete."
-                    } else {
-                        "Built-in category. Tap amount to edit limit. Long-press for label/icon edits."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            LinearProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier.fillMaxWidth(),
+                color = animatedColor,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+            Text(
+                text = "Tap to edit limit, label, or icon",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CategoryMetaEditorDialog(
+private fun BudgetEditBottomSheet(
     budget: Budget,
     onDismiss: () -> Unit,
-    onSave: (label: String, emoji: String) -> Unit
+    onSave: (updatedBudget: Budget, newLabel: String, newEmoji: String) -> Unit,
+    onDelete: (budget: Budget) -> Unit
 ) {
+    var sliderMax by remember(budget.id) {
+        mutableFloatStateOf(maxOf(1000f, (budget.limit.toFloat() / 0.8f).coerceAtLeast(1000f)))
+    }
+    var sliderValue by remember(budget.id) { mutableFloatStateOf(budget.limit.toFloat().coerceAtLeast(0f)) }
+    var limitInput by remember(budget.id) { mutableStateOf(String.format(Locale.US, "%.2f", budget.limit)) }
     var labelInput by remember(budget.id) { mutableStateOf(budget.label) }
     var emojiInput by remember(budget.id) { mutableStateOf(budget.emoji) }
-    val canSave = labelInput.trim().isNotBlank() && emojiInput.trim().isNotBlank()
+
+    val parsedLimit = limitInput.toDoubleOrNull()
+    val canSave = labelInput.trim().isNotBlank() && emojiInput.trim().isNotBlank() && parsedLimit != null && parsedLimit >= 0.0
     val labelHint = "Max $CATEGORY_LABEL_MAX_LENGTH chars. Allowed: letters, numbers, spaces, and !@#\$%^&*()_+-:;.,/?"
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("Edit category") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = labelInput,
-                    onValueChange = { next ->
-                        if (next.length <= CATEGORY_LABEL_MAX_LENGTH && CATEGORY_LABEL_ALLOWED.matches(next)) {
-                            labelInput = next
-                        }
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text("Edit Budget: ${budget.label}", style = MaterialTheme.typography.titleLarge)
+
+            // Scrubbing slider for limit with quick adjustment
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Budget Limit", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "$${String.format(Locale.US, "%.2f", sliderValue)}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Slider(
+                    value = sliderValue,
+                    onValueChange = {
+                        sliderValue = it
+                        limitInput = String.format(Locale.US, "%.2f", it)
                     },
-                    label = { Text("Label") },
-                    supportingText = { Text(labelHint) },
+                    valueRange = 0f..sliderMax,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
-                    value = emojiInput,
-                    onValueChange = { emojiInput = it },
-                    label = { Text("Icon (emoji)") },
-                    modifier = Modifier.fillMaxWidth()
+                Text(
+                    "Drag slider to scrub quickly (default 0-1000). Typing a higher value expands max so your typed value is 80% of the slider range.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(labelInput.trim(), emojiInput.trim()) }, enabled = canSave) {
-                Text("Save")
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = limitInput,
+                onValueChange = { next ->
+                    limitInput = next
+                    val typed = next.toDoubleOrNull() ?: return@OutlinedTextField
+                    if (typed < 0.0) return@OutlinedTextField
+                    val targetMax = maxOf(1000f, (typed / 0.8).toFloat())
+                    sliderMax = targetMax
+                    sliderValue = typed.toFloat().coerceIn(0f, sliderMax)
+                },
+                label = { Text("Budget limit") },
+                supportingText = {
+                    Text(if (parsedLimit == null || parsedLimit < 0.0) "Enter a non-negative number." else "Typed value syncs slider position.")
+                },
+                isError = parsedLimit == null || parsedLimit < 0.0,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Label editing
+            OutlinedTextField(
+                value = labelInput,
+                onValueChange = { next ->
+                    if (next.length <= CATEGORY_LABEL_MAX_LENGTH && CATEGORY_LABEL_ALLOWED.matches(next)) {
+                        labelInput = next
+                    }
+                },
+                label = { Text("Label") },
+                supportingText = { Text(labelHint) },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Icon editing
+            OutlinedTextField(
+                value = emojiInput,
+                onValueChange = { emojiInput = it },
+                label = { Text("Icon (emoji)") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Action buttons at bottom
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Cancel")
+                }
+
+                if (budget.isCustom) {
+                    TextButton(
+                        onClick = { onDelete(budget) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    TextButton(
+                        onClick = { onDelete(budget) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Reset", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+
+                TextButton(
+                    onClick = {
+                        onSave(
+                            budget.copy(limit = parsedLimit ?: budget.limit),
+                            labelInput.trim(),
+                            emojiInput.trim()
+                        )
+                    },
+                    enabled = canSave,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Save")
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
-    )
+    }
 }
 
 @Composable

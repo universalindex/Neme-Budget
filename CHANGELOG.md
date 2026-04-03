@@ -3,6 +3,89 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-04-02 - AI Assistant (Transactions Delete Simplified to Tap-Then-Delete)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`:
+  * Removed swipe-to-delete behavior entirely.
+  * Removed swipe/background delete UI that was visually glitchy.
+  * Kept transaction rows tap-to-edit.
+  * Deletion is now tap flow only via the existing `Delete` button in `EditTransactionBottomSheet`.
+  * Kept snackbar undo behavior for deletes triggered from edit flow.
+
+### Why This Was Done
+1. Swipe interactions were unstable and visually distracting.
+2. Tap-then-delete is clearer and more predictable.
+3. This reduces accidental destructive actions while preserving undo safety.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after removing swipe delete.
+
+## 2026-04-02 - AI Assistant (Transactions Delete UX Simplified: Hard Swipe + Undo + Tap Menu Delete)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`:
+  * Removed the red/reveal swipe background behavior that felt glitchy.
+  * Kept swipe delete, but simplified to hard right-to-left swipe trigger with a stricter threshold.
+  * Added undo flow via snackbar after each delete.
+  * Added per-row overflow menu (`...`) with `Edit` and `Delete` actions for tap-menu deletion.
+  * Kept row tap-to-edit behavior.
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/TransactionsViewModel.kt`:
+  * Added `restoreTransaction(transaction)` so undo can reinsert deleted transactions.
+
+### Why This Was Done
+1. The previous swipe visuals were distracting and looked unstable in motion.
+2. Hard-swipe + undo preserves fast deletion while making mistakes recoverable.
+3. Menu delete from a tap path supports users who prefer explicit actions over gestures.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after the transaction UX changes.
+
+## 2026-04-02 - AI Assistant (Budget Typed Limit + Dynamic Scrubber + Transaction Swipe Delete)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/BudgetsScreen.kt`:
+  * Added a typed `Budget limit` input in the unified budget bottom sheet.
+  * Synced slider and typed value both ways (drag updates text, typing updates slider).
+  * Changed default scrubber range to `0..1000`.
+  * Added dynamic range expansion so when a user types a higher number, that number becomes ~80% of scrubber max (`max = typed / 0.8`).
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/TransactionsScreen.kt`:
+  * Made transaction rows tap-to-edit by making the row itself clickable.
+  * Added swipe-to-delete with Material `SwipeToDismissBox`:
+    * partial swipe exposes a `Delete` action button,
+    * full swipe right-to-left performs immediate delete.
+  * Removed row-level inline `Edit`/`Delete` text buttons and removed delete confirmation dialog flow.
+
+### Why This Was Done
+1. Budget editing needed both precision (typed input) and speed (scrubbing).
+2. Dynamic scrubber scaling avoids hard slider ceilings for larger budgets.
+3. Transactions now match requested mobile pattern: tap to edit, swipe to delete (including full-swipe shortcut).
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after UI changes.
+
+## 2026-04-02 - AI Assistant (Unified Budget Editor: Scrubbing Slider + Single-Tap Edit)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/ui/screens/BudgetsScreen.kt`:
+  * **Removed two-action UX**: Eliminated tap-to-edit-limit and long-press-to-edit-label workflow
+  * **Added unified bottom sheet**: Single tap on any budget card now opens `BudgetEditBottomSheet` with all editing controls
+  * **Added scrubbing slider**: Users can now quickly drag a slider to adjust budget limits (1-5000 range)
+  * **Combined controls**: Label, icon, and limit editing all available in one place
+  * **Action buttons**: Cancel, Delete/Reset, and Save buttons always visible at bottom
+  * Removed `CategoryMetaEditorDialog` (unused, replaced by bottom sheet)
+  * Simplified `BudgetCard` to show current spent/limit without inline editing UI
+
+### Why This Was Done
+1. Users wanted simpler interaction: one tap instead of tap-and-hold split
+2. Scrubbing slider enables quick budget adjustments without typing (faster UX)
+3. All budget metadata (limit, label, icon) is edited together in context
+4. Cleaner mobile UX reduces cognitive load
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully
+* Built full debug APK: `:app:assembleDebug` successful
+
 ## 2026-04-02 - AI Assistant (Built-In Category Presentation Overrides Now Propagate to Transaction UI)
 
 ### What Changed

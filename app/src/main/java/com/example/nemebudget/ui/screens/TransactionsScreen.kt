@@ -1,5 +1,6 @@
 package com.example.nemebudget.ui.screens
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +21,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -32,6 +32,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +59,7 @@ import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.viewmodel.TransactionsViewModel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -69,10 +76,34 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
     val groupedTransactions = remember(transactions) {
         transactions.groupBy { sectionFormatter.format(Date(it.date)) }.toList()
     }
-    var pendingDeleteTransaction by remember { mutableStateOf<Transaction?>(null) }
     var showAddTransactionSheet by remember { mutableStateOf(false) }
     var editingTransaction by remember { mutableStateOf<Transaction?>(null) }
-    Box(modifier = Modifier.fillMaxSize()) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    fun deleteWithUndo(txn: Transaction) {
+        viewModel.deleteTransaction(txn.id)
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = "Deleted ${txn.merchant}",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.restoreTransaction(txn)
+            }
+        }
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { innerPadding ->
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(innerPadding)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -160,8 +191,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
                         TransactionRow(
                             transaction = txn,
                             dateLabel = dateFormatter.format(Date(txn.date)),
-                            onEdit = { editingTransaction = txn },
-                            onDelete = { pendingDeleteTransaction = txn }
+                            onEdit = { editingTransaction = txn }
                         )
                     }
                 }
@@ -176,6 +206,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
         ) {
             Text("+", style = MaterialTheme.typography.displaySmall)
         }
+    }
     }
     if (showAddTransactionSheet) {
         AddTransactionBottomSheet(
@@ -193,7 +224,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
             categoryOptions = categoryOptions,
             onDismiss = { editingTransaction = null },
             onDelete = {
-                viewModel.deleteTransaction(original.id)
+                deleteWithUndo(original)
                 editingTransaction = null
             },
             onSave = { merchant, amount, category ->
@@ -204,22 +235,6 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
                 )
                 viewModel.saveEdit(original, updated)
                 editingTransaction = null
-            }
-        )
-    }
-    pendingDeleteTransaction?.let { txn ->
-        AlertDialog(
-            onDismissRequest = { pendingDeleteTransaction = null },
-            title = { Text("Delete transaction?") },
-            text = { Text("Remove ${txn.merchant} for $${String.format(Locale.US, "%.2f", txn.amount)}?") },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.deleteTransaction(txn.id)
-                    pendingDeleteTransaction = null
-                }) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteTransaction = null }) { Text("Cancel") }
             }
         )
     }
@@ -251,8 +266,7 @@ private fun RejectedItemRow(item: RejectedNotification, onOpen: () -> Unit) {
 private fun TransactionRow(
     transaction: Transaction,
     dateLabel: String,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onEdit: () -> Unit
 ) {
     val confidenceColor = when {
         transaction.confidence < 0.75f -> MaterialTheme.colorScheme.error
@@ -262,6 +276,7 @@ private fun TransactionRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onEdit)
     ) {
         Row(
             modifier = Modifier
@@ -294,17 +309,11 @@ private fun TransactionRow(
                     )
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "-$${String.format(Locale.US, "%.2f", transaction.amount)}",
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.width(6.dp))
-                TextButton(onClick = { onEdit() }) { Text("Edit") }
-                Spacer(Modifier.width(6.dp))
-                TextButton(onClick = { onDelete() }) { Text("Delete") }
-            }
+            Text(
+                text = "-$${String.format(Locale.US, "%.2f", transaction.amount)}",
+                color = MaterialTheme.colorScheme.error,
+                fontWeight = FontWeight.SemiBold
+            )
         }
         LinearProgressIndicator(
             progress = { transaction.confidence.coerceIn(0f, 1f) },

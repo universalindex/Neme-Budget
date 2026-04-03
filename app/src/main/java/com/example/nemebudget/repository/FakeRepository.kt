@@ -3,7 +3,6 @@ package com.example.nemebudget.repository
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.Budget
 import com.example.nemebudget.model.Category
-import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.CategoryPresentation
 import com.example.nemebudget.model.CustomBudgetCategory
 import com.example.nemebudget.model.ModelStatus
@@ -19,7 +18,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -92,17 +90,6 @@ class FakeRepository(
         budgetsFlow.value = generateBudgets(transactionsFlow.value, settingsFlow.value)
     }
 
-    override suspend fun deleteTransaction(transaction: Transaction) {
-        transactionsFlow.value = transactionsFlow.value.filterNot { it.id == transaction.id }
-        budgetsFlow.value = generateBudgets(transactionsFlow.value)
-    }
-
-    override suspend fun addTransaction(transaction: Transaction) {
-        val currentMaxId = transactionsFlow.value.maxOfOrNull { it.id } ?: 0
-        val newTx = transaction.copy(id = currentMaxId + 1)
-        transactionsFlow.value = (listOf(newTx) + transactionsFlow.value).sortedByDescending { it.date }
-        budgetsFlow.value = generateBudgets(transactionsFlow.value)
-    }
 
     override fun getBudgets(): Flow<List<Budget>> = budgetsFlow
 

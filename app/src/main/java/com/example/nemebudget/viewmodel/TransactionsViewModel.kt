@@ -91,6 +91,12 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
         }
     }
 
+    fun restoreTransaction(transaction: Transaction) {
+        viewModelScope.launch {
+            repo.addTransaction(transaction)
+        }
+    }
+
     fun updateRejectedItem(id: Int, title: String, text: String, reason: String) {
         viewModelScope.launch {
             repo.updateRejectedNotification(id, title, text, reason)
