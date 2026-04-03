@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.RejectedNotification
+import com.example.nemebudget.model.RuleDefinition
+import com.example.nemebudget.model.RuleField
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.model.transactionCategoryOptions
 import com.example.nemebudget.repository.AppRepository
@@ -57,9 +59,20 @@ class TransactionsViewModel(private val repo: AppRepository) : ViewModel() {
             repo.updateTransaction(updated)
 
             if (original.category.id != updated.category.id) {
-                val newRule = "${original.merchant.trim()} = ${updated.category.label}"
+                val merchant = original.merchant.trim()
+                if (merchant.isBlank()) return@launch
+                val newRule = RuleDefinition(
+                    id = "rule_${original.id}_${updated.category.id}_${merchant.lowercase()}",
+                    matchField = RuleField.MERCHANT,
+                    query = merchant,
+                    targetCategory = updated.category.label
+                )
                 val currentSettings = repo.getSettings().first()
-                val hasRule = currentSettings.customRules.any { it.equals(newRule, ignoreCase = true) }
+                val hasRule = currentSettings.customRules.any { existing ->
+                    existing.matchField == newRule.matchField &&
+                        existing.query.equals(newRule.query, ignoreCase = true) &&
+                        existing.targetCategory.equals(newRule.targetCategory, ignoreCase = true)
+                }
                 if (!hasRule) {
                     repo.saveSettings(currentSettings.copy(customRules = currentSettings.customRules + newRule))
                 }

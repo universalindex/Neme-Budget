@@ -6,8 +6,11 @@ import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.CategoryPresentation
 import com.example.nemebudget.model.CustomBudgetCategory
 import com.example.nemebudget.model.ModelStatus
+import com.example.nemebudget.model.RuleDefinition
+import com.example.nemebudget.model.RuleField
 import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
+import com.example.nemebudget.model.activeCategoryOptions
 import com.example.nemebudget.model.toDefinition
 import com.example.nemebudget.model.resolveCategoryByLabel
 import com.example.nemebudget.model.resolveCategoryById
@@ -36,7 +39,14 @@ class FakeRepository(
         AppSettings(
             primaryBank = "Chase",
             ignoredApps = setOf("com.venmo"),
-            customRules = listOf("Chevron = Gas")
+            customRules = listOf(
+                RuleDefinition(
+                    id = "seed_rule_1",
+                    matchField = RuleField.MERCHANT,
+                    query = "Chevron",
+                    targetCategory = "Gas"
+                )
+            )
         )
     )
     private val modelStatusFlow = MutableStateFlow(
@@ -111,11 +121,7 @@ class FakeRepository(
     }
 
     override suspend fun deleteBudget(category: Category) {
-        val updatedSettings = settingsFlow.value.copy(
-            budgetLimits = settingsFlow.value.budgetLimits - category
-        )
-        settingsFlow.value = updatedSettings
-        budgetsFlow.value = generateBudgets(transactionsFlow.value, updatedSettings)
+        softDeleteBudgetCategory(category.name)
     }
 
     override suspend fun addCustomBudgetCategory(label: String, emoji: String, limit: Double) {
@@ -159,8 +165,13 @@ class FakeRepository(
     }
 
     override suspend fun deleteCustomBudgetCategory(budgetId: String) {
+        softDeleteBudgetCategory(budgetId)
+    }
+
+    override suspend fun softDeleteBudgetCategory(budgetId: String) {
+        val normalizedId = if (budgetId.startsWith(BUILTIN_PREFIX)) budgetId.removePrefix(BUILTIN_PREFIX) else budgetId
         val updatedSettings = settingsFlow.value.copy(
-            customBudgetCategories = settingsFlow.value.customBudgetCategories.filterNot { it.id == budgetId }
+            hiddenCategoryIds = settingsFlow.value.hiddenCategoryIds + normalizedId
         )
         settingsFlow.value = updatedSettings
         budgetsFlow.value = generateBudgets(transactionsFlow.value, updatedSettings)
@@ -337,20 +348,22 @@ class FakeRepository(
             Category.OTHER to 180.0
         )
 
-        val builtInBudgets = Category.entries.map { category ->
+        val activeCategories = settings.activeCategoryOptions()
+        val builtInBudgets = activeCategories.filter { !it.isCustom && Category.entries.any { category -> category.name == it.id } }.map { categoryDef ->
+            val category = Category.entries.first { it.name == categoryDef.id }
             val override = settings.categoryPresentation[category.name]
             Budget(
                 id = "$BUILTIN_PREFIX${category.name}",
                 category = category,
-                label = override?.label ?: category.label,
-                emoji = override?.emoji ?: category.emoji,
+                label = categoryDef.label,
+                emoji = categoryDef.emoji,
                 spent = spentByCategory[category.name] ?: 0.0,
                 limit = settings.budgetLimits[category] ?: limits.getValue(category),
                 isCustom = false
             )
         }
 
-        val customBudgets = settings.customBudgetCategories.map { custom ->
+        val customBudgets = settings.customBudgetCategories.filterNot { settings.hiddenCategoryIds.contains(it.id) }.map { custom ->
             Budget(
                 id = custom.id,
                 category = null,

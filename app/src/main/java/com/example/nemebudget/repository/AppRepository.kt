@@ -21,6 +21,7 @@ interface AppRepository {
     suspend fun addCustomBudgetCategory(label: String, emoji: String, limit: Double)
     suspend fun updateBudgetCategoryMeta(budgetId: String, label: String, emoji: String)
     suspend fun deleteCustomBudgetCategory(budgetId: String)
+    suspend fun softDeleteBudgetCategory(budgetId: String)
 
     fun getSettings(): Flow<AppSettings>
     suspend fun saveSettings(settings: AppSettings)

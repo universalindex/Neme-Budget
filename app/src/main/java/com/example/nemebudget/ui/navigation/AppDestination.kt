@@ -20,6 +20,7 @@ sealed class AppDestination(
     data object Budgets : AppDestination("budgets", "Budgets", Icons.Filled.AccountCircle)
     data object Settings : AppDestination("settings", "Settings", Icons.Outlined.Settings)
     data object Lab : AppDestination("lab", "LLM Lab", Icons.Outlined.Settings)
+    data object ManageRules : AppDestination("manage_rules", "Manage Rules", Icons.Outlined.Settings)
     data object ResolveError : AppDestination("resolve_error/{errorId}", "Resolve Error", Icons.Outlined.Settings)
 }
 

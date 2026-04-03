@@ -71,7 +71,7 @@ private data class DeviceAppItem(
 )
 
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLab: () -> Unit) {
+fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLab: () -> Unit, onOpenManageRules: () -> Unit) {
     val context = LocalContext.current
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -86,7 +86,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
     val pendingCount by viewModel.pendingNotificationCount.collectAsStateWithLifecycle()
     val processingState by viewModel.processingState.collectAsStateWithLifecycle()
-    var ruleInput by remember { mutableStateOf("") }
     var showWipeDialog by remember { mutableStateOf(false) }
     var showIgnoreAppsSubmenu by remember { mutableStateOf(false) }
     var testNotificationTitle by remember { mutableStateOf("America First Alert") }
@@ -103,12 +102,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
             onBack = { showIgnoreAppsSubmenu = false }
         )
         return
-    }
-
-    fun submitRule() {
-        if (ruleInput.isBlank()) return
-        viewModel.addCustomRule(ruleInput)
-        ruleInput = ""
     }
 
     LazyColumn(
@@ -159,15 +152,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
         }
 
         item {
-            OutlinedTextField(
-                value = settings.primaryBank,
-                onValueChange = viewModel::updatePrimaryBank,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Primary Bank (e.g. America First)") }
-            )
-        }
-
-        item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 modifier = Modifier
@@ -200,37 +184,33 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
             )
         }
 
-        item { HorizontalDivider() }
-
         item {
-            Text("Custom AI Rules", style = MaterialTheme.typography.titleMedium)
-        }
-
-        item {
-            OutlinedTextField(
-                value = ruleInput,
-                onValueChange = { ruleInput = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Chevron = Gas") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { submitRule() })
-            )
-        }
-
-        item {
-            Button(onClick = { submitRule() }, enabled = ruleInput.isNotBlank()) {
-                Text("Add Rule")
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenManageRules() }
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Manage Rules", style = MaterialTheme.typography.titleMedium)
+                        Text("Open the rule list, search, add, or remove saved rules.", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Manage rules")
+                }
             }
         }
 
-        items(settings.customRules) { rule ->
-            InputChip(
-                selected = false,
-                onClick = { viewModel.removeCustomRule(rule) },
-                label = { Text(rule) },
-                trailingIcon = {
-                    Icon(imageVector = Icons.Default.Close, contentDescription = "Remove rule")
-                }
+        item {
+            Text(
+                "Rules are now typed: choose a field, enter what to match, and pick the category. The app applies them after the LLM extracts a transaction.",
+                style = MaterialTheme.typography.bodySmall
             )
         }
 

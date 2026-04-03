@@ -64,6 +64,7 @@ import com.example.nemebudget.repository.RealRepository
 import com.example.nemebudget.ui.dashboard.DashboardScreen
 import com.example.nemebudget.ui.navigation.AppDestination
 import com.example.nemebudget.ui.navigation.bottomDestinations
+import com.example.nemebudget.ui.screens.ManageRulesScreen
 import com.example.nemebudget.ui.screens.OnboardingFlowScreen
 import com.example.nemebudget.ui.screens.BudgetsScreen
 import com.example.nemebudget.ui.screens.ResolveErrorScreen
@@ -195,11 +196,19 @@ private fun MainApp() {
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     pipeline = pipeline,
-                    onOpenLab = { navController.navigate(AppDestination.Lab.route) }
+                    onOpenLab = { navController.navigate(AppDestination.Lab.route) },
+                    onOpenManageRules = { navController.navigate(AppDestination.ManageRules.route) }
                 )
             }
             composable(AppDestination.Lab.route) {
                 LlmTestingScreen(pipeline = pipeline, modifier = Modifier.fillMaxSize())
+            }
+            composable(AppDestination.ManageRules.route) {
+                ManageRulesScreen(
+                    viewModel = settingsViewModel,
+                    categoryOptions = transactionCategoryOptions,
+                    onBack = { navController.popBackStack() }
+                )
             }
             composable(
                 route = AppDestination.ResolveError.route,

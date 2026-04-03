@@ -1,6 +1,7 @@
 package com.example.nemebudget.notifications
 
 import android.app.Notification
+import android.content.ComponentName
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -27,6 +28,18 @@ class BankNotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         Log.d("BankListener", "Service Connected! Monitoring for bank alerts.")
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.w("BankListener", "Listener disconnected by system. Requesting rebind.")
+        try {
+            val component = ComponentName(applicationContext, BankNotificationListenerService::class.java)
+            NotificationListenerService.requestRebind(component)
+            Log.i("BankListener", "Rebind request submitted for notification listener.")
+        } catch (t: Throwable) {
+            Log.e("BankListener", "Failed to request listener rebind.", t)
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {

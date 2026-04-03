@@ -138,11 +138,7 @@ fun BudgetsScreen(viewModel: BudgetsViewModel) {
                 }
             },
             onDelete = { budgetToDelete ->
-                if (budgetToDelete.isCustom) {
-                    viewModel.deleteCustomCategory(budgetToDelete.id)
-                } else {
-                    budgetToDelete.category?.let(viewModel::deleteBudget)
-                }
+                viewModel.softDeleteBudgetCategory(budgetToDelete.id)
                 editingBudget = null
                 scope.launch {
                     snackbarHostState.showSnackbar("Deleted ${budgetToDelete.label}")
@@ -212,6 +208,7 @@ private fun BudgetEditBottomSheet(
     onSave: (updatedBudget: Budget, newLabel: String, newEmoji: String) -> Unit,
     onDelete: (budget: Budget) -> Unit
 ) {
+    var showDeleteConfirm by remember(budget.id) { mutableStateOf(false) }
     var sliderMax by remember(budget.id) {
         mutableFloatStateOf(maxOf(1000f, (budget.limit.toFloat() / 0.8f).coerceAtLeast(1000f)))
     }
@@ -324,20 +321,11 @@ private fun BudgetEditBottomSheet(
                     Text("Cancel")
                 }
 
-                if (budget.isCustom) {
-                    TextButton(
-                        onClick = { onDelete(budget) },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Delete", color = MaterialTheme.colorScheme.error)
-                    }
-                } else {
-                    TextButton(
-                        onClick = { onDelete(budget) },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Reset", color = MaterialTheme.colorScheme.error)
-                    }
+                TextButton(
+                    onClick = { showDeleteConfirm = true },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
 
                 TextButton(
@@ -355,6 +343,32 @@ private fun BudgetEditBottomSheet(
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        val destructiveTitle = "Delete category?"
+        val destructiveMessage = "This will archive '${budget.label}' so it no longer appears in pickers and budget lists."
+
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(destructiveTitle) },
+            text = { Text(destructiveMessage) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDelete(budget)
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

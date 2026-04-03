@@ -43,5 +43,11 @@ class BudgetsViewModel(private val repo: AppRepository) : ViewModel() {
             repo.deleteCustomBudgetCategory(budgetId)
         }
     }
+
+    fun softDeleteBudgetCategory(budgetId: String) {
+        viewModelScope.launch {
+            repo.softDeleteBudgetCategory(budgetId)
+        }
+    }
 }
 

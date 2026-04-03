@@ -21,9 +21,13 @@ import com.example.nemebudget.model.CategoryPresentation
 import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.CustomBudgetCategory
 import com.example.nemebudget.model.ModelStatus
+import com.example.nemebudget.model.RuleDefinition
+import com.example.nemebudget.model.RuleField
 import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
+import com.example.nemebudget.model.activeCategoryOptions
 import com.example.nemebudget.model.resolveCategoryByLabel
+import com.example.nemebudget.model.resolveActiveCategoryByLabel
 import com.example.nemebudget.model.toDefinition
 import com.example.nemebudget.pipeline.TransactionalNotificationGate
 import kotlinx.coroutines.Dispatchers
@@ -122,20 +126,21 @@ class RealRepository(
                  .mapValues { (_, txns) -> txns.sumOf { it.amount } }
 
             val defaultLimits = defaultBudgetLimits()
-            val builtInBudgets = Category.entries.map { category ->
-                val presentation = settings.categoryPresentation[category.name]
+            val activeCategories = settings.activeCategoryOptions()
+            val builtInBudgets = activeCategories.filter { !it.isCustom && Category.entries.any { category -> category.name == it.id } }.map { categoryDef ->
+                val category = Category.entries.first { it.name == categoryDef.id }
                 Budget(
                     id = "$BUILTIN_PREFIX${category.name}",
                     category = category,
-                    label = presentation?.label ?: category.label,
-                    emoji = presentation?.emoji ?: category.emoji,
+                    label = categoryDef.label,
+                    emoji = categoryDef.emoji,
                     spent = expensesByCategory[category.name] ?: 0.0,
                     limit = settings.budgetLimits[category] ?: defaultLimits.getValue(category),
                     isCustom = false
                 )
             }
 
-            val customBudgets = settings.customBudgetCategories.map { custom ->
+            val customBudgets = settings.customBudgetCategories.filterNot { settings.hiddenCategoryIds.contains(it.id) }.map { custom ->
                 Budget(
                     id = custom.id,
                     category = null,
@@ -178,12 +183,7 @@ class RealRepository(
      * This removes the user's custom override and falls back to the default limit.
      */
     override suspend fun deleteBudget(category: Category) {
-        val updated = settingsFlow.value.copy(
-            budgetLimits = settingsFlow.value.budgetLimits - category
-        )
-        settingsFlow.value = updated
-        persistSettings(updated)
-        Log.d(TAG, "Budget delete requested for $category")
+        softDeleteBudgetCategory(category.name)
     }
 
     override suspend fun addCustomBudgetCategory(label: String, emoji: String, limit: Double) {
@@ -227,11 +227,17 @@ class RealRepository(
     }
 
     override suspend fun deleteCustomBudgetCategory(budgetId: String) {
+        softDeleteBudgetCategory(budgetId)
+    }
+
+    override suspend fun softDeleteBudgetCategory(budgetId: String) {
+        val normalizedId = normalizeBudgetId(budgetId)
         val updated = settingsFlow.value.copy(
-            customBudgetCategories = settingsFlow.value.customBudgetCategories.filterNot { it.id == budgetId }
+            hiddenCategoryIds = settingsFlow.value.hiddenCategoryIds + normalizedId
         )
         settingsFlow.value = updated
         persistSettings(updated)
+        Log.d(TAG, "Budget category archived: $normalizedId")
     }
 
     /**
@@ -312,7 +318,7 @@ class RealRepository(
                         val txn = Transaction(
                             merchant = result.transaction.merchant,
                             amount = result.transaction.amount,
-                            category = settingsFlow.value.resolveCategoryByLabel(result.transaction.category)
+                                        category = settingsFlow.value.resolveActiveCategoryByLabel(result.transaction.category)
                                 ?: CategoryDefinition(
                                     id = Category.OTHER.name,
                                     label = Category.OTHER.label,
@@ -520,13 +526,7 @@ class RealRepository(
                         }
                     }
                 } ?: emptySet(),
-                customRules = root.optJSONArray("customRules")?.let { array ->
-                    buildList {
-                        for (index in 0 until array.length()) {
-                            array.optString(index).takeIf { it.isNotBlank() }?.let { add(it) }
-                        }
-                    }
-                } ?: emptyList(),
+                customRules = parseRuleDefinitions(root.optJSONArray("customRules") ?: org.json.JSONArray()),
                 budgetLimits = root.optJSONObject("budgetLimits")?.let { budgetJson ->
                     buildMap {
                         Category.entries.forEach { category ->
@@ -557,7 +557,14 @@ class RealRepository(
                             add(CustomBudgetCategory(id = id, label = label, emoji = emoji, limit = limit))
                         }
                     }
-                } ?: emptyList()
+                } ?: emptyList(),
+                hiddenCategoryIds = root.optJSONArray("hiddenCategoryIds")?.let { hiddenArray ->
+                    buildSet {
+                        for (index in 0 until hiddenArray.length()) {
+                            hiddenArray.optString(index).takeIf { it.isNotBlank() }?.let { add(normalizeBudgetId(it)) }
+                        }
+                    }
+                } ?: emptySet()
             )
         } catch (t: Throwable) {
             Log.w(TAG, "Failed to read saved settings, using defaults", t)
@@ -575,7 +582,16 @@ class RealRepository(
         val root = JSONObject().apply {
             put("primaryBank", settings.primaryBank)
             put("ignoredApps", org.json.JSONArray(settings.ignoredApps.toList()))
-            put("customRules", org.json.JSONArray(settings.customRules))
+            put("customRules", org.json.JSONArray().apply {
+                settings.customRules.forEach { rule ->
+                    put(JSONObject().apply {
+                        put("id", rule.id)
+                        put("matchField", rule.matchField.name)
+                        put("query", rule.query)
+                        put("targetCategory", rule.targetCategory)
+                    })
+                }
+            })
             put("budgetLimits", JSONObject().apply {
                 settings.budgetLimits.forEach { (category, limit) ->
                     put(category.name, limit)
@@ -599,12 +615,53 @@ class RealRepository(
                     })
                 }
             })
+            put("hiddenCategoryIds", org.json.JSONArray(settings.hiddenCategoryIds.toList()))
         }
         prefs.edit().putString(settingsKey, root.toString()).apply()
     }
 
     private companion object {
         const val BUILTIN_PREFIX = "builtin:"
+    }
+
+    private fun normalizeBudgetId(budgetId: String): String {
+        return if (budgetId.startsWith(BUILTIN_PREFIX)) budgetId.removePrefix(BUILTIN_PREFIX) else budgetId
+    }
+
+    private fun parseRuleDefinitions(array: org.json.JSONArray): List<RuleDefinition> {
+        return buildList {
+            for (index in 0 until array.length()) {
+                when (val item = array.opt(index)) {
+                    is JSONObject -> {
+                        val id = item.optString("id").ifBlank { continue }
+                        val field = runCatching { RuleField.valueOf(item.optString("matchField")) }.getOrNull() ?: continue
+                        val query = item.optString("query").trim()
+                        val targetCategory = item.optString("targetCategory").trim()
+                        if (query.isBlank() || targetCategory.isBlank()) continue
+                        add(RuleDefinition(id = id, matchField = field, query = query, targetCategory = targetCategory))
+                    }
+                    is String -> {
+                        parseLegacyRule(item)?.let { add(it) }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun parseLegacyRule(raw: String): RuleDefinition? {
+        val trimmed = raw.trim()
+        if (trimmed.isBlank()) return null
+        val parts = trimmed.split(Regex("\\s*[=:>]\\s*"), limit = 2)
+        if (parts.size != 2) return null
+        val query = parts[0].trim()
+        val targetCategory = parts[1].trim()
+        if (query.isBlank() || targetCategory.isBlank()) return null
+        return RuleDefinition(
+            id = "legacy_${trimmed.hashCode()}",
+            matchField = RuleField.MERCHANT,
+            query = query,
+            targetCategory = targetCategory
+        )
     }
 }
 

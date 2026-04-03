@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.ModelStatus
+import com.example.nemebudget.model.RuleDefinition
 import com.example.nemebudget.model.ProcessingState
 import com.example.nemebudget.repository.AppRepository
 import kotlinx.coroutines.Job
@@ -100,15 +101,17 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
         saveSettings(current.copy(ignoredApps = updated))
     }
 
-    fun addCustomRule(rule: String) {
-        val normalized = rule.trim()
-        if (normalized.isBlank()) return
+    fun addCustomRule(rule: RuleDefinition) {
         val current = settings.value
-        if (current.customRules.any { it.equals(normalized, ignoreCase = true) }) return
-        saveSettings(current.copy(customRules = current.customRules + normalized))
+        if (current.customRules.any { existing ->
+                existing.matchField == rule.matchField &&
+                    existing.query.equals(rule.query, ignoreCase = true) &&
+                    existing.targetCategory.equals(rule.targetCategory, ignoreCase = true)
+            }) return
+        saveSettings(current.copy(customRules = current.customRules + rule))
     }
 
-    fun removeCustomRule(rule: String) {
+    fun removeCustomRule(rule: RuleDefinition) {
         val current = settings.value
         saveSettings(current.copy(customRules = current.customRules - rule))
     }

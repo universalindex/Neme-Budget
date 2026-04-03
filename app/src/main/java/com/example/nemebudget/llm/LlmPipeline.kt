@@ -6,11 +6,14 @@ import android.content.Context
 import android.util.Log
 import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Category
+import com.example.nemebudget.model.RuleDefinition
+import com.example.nemebudget.model.RuleField
 import com.example.nemebudget.model.toDefinition
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.consumeEach
@@ -43,6 +46,18 @@ class LlmPipeline(private val context: Context) {
 
     private fun allowedCategoryText(): String = allowedCategories().joinToString(", ")
 
+    private fun loadCustomRules(): List<RuleDefinition> {
+        val prefs = context.applicationContext.getSharedPreferences("nemebudget_prefs", Context.MODE_PRIVATE)
+        val json = prefs.getString("app_settings_json", null) ?: return emptyList()
+
+        return try {
+            val root = JSONObject(json)
+            parseRuleDefinitions(root.optJSONArray("customRules") ?: JSONArray())
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
     private fun jsonSchema(): String {
         val categories = allowedCategories()
         return """
@@ -62,9 +77,24 @@ class LlmPipeline(private val context: Context) {
     }
 
     private val systemPrompt = """
-Extract: Merchant, Amount, Category.
-Output only valid JSONS
- """.trimIndent()
+You extract a single financial transaction from a raw mobile notification.
+
+Output requirements:
+- Return exactly one JSON object with keys: merchant, amount, category.
+Extraction rules for confusing notifications:
+1) Merchant
+   - Prefer the payee/store/counterparty near words like "at", "from", "to", "merchant", or "payee".
+   - Ignore card masks, OTP codes, balances, and reference IDs.
+2) Amount
+   - Extract the transaction amount that was charged/spent/debited/paid/credited.
+   - Ignore available balance, remaining limit, rewards, and account-ending digits.
+   - If multiple amounts exist, choose the one tied to the transaction action.
+3) Category
+   - Map to the closest allowed category; use "Other" if uncertain.
+
+If the notification is not clearly a transaction, return:
+{"merchant":"Error","amount":0.0,"category":"Other"}
+""".trimIndent()
 
     private var mlcEngine: MLCEngine? = null
 
@@ -129,8 +159,8 @@ Output only valid JSONS
     /**
      * Handles the full flow of generating, verifying, and retrying if the LLM hallucinated.
      */
-    suspend fun extractWithRetry(rawNotification: String, maxAttempts: Int = 2): ExtractionResult = withContext(Dispatchers.IO) {
-        var currentPrompt = "Notification: \"$rawNotification\""
+    suspend fun extractWithRetry(rawNotification: String, maxAttempts: Int = 3): ExtractionResult = withContext(Dispatchers.IO) {
+        var currentPrompt = buildInitialPrompt(rawNotification)
         var lastJson = """{"merchant":"Error","amount":0.0,"category":"Other"}"""
         var lastTx = ExtractedTransaction("Error", 0.0, "Other", false, "Unknown error")
 
@@ -148,14 +178,7 @@ Output only valid JSONS
 
             if (attempt < maxAttempts) {
                 Log.d("LlmPipeline", "Validation failed: ${tx.verificationNotes}. Prompting LLM to correct itself...")
-                currentPrompt = """
-                    Original Notification: "$rawNotification"
-                    Your previous output: $jsonStr
-                    Validation Error: ${tx.verificationNotes}
-                    Valid categories (exact spelling): ${allowedCategoryText()}
-                    Return JSON only with keys: merchant, amount, category.
-                    Do not abbreviate category names.
-                """.trimIndent()
+                currentPrompt = buildRetryPrompt(rawNotification, jsonStr, tx.verificationNotes)
             }
         }
 
@@ -233,27 +256,47 @@ Output only valid JSONS
             val amount = jsonObject.getDouble("amount")
             val category = normalizeCategory(jsonObject.getString("category"))
 
+            val baseTransaction = ExtractedTransaction(
+                merchant = merchant,
+                amount = amount,
+                category = category,
+                isVerified = false,
+                verificationNotes = ""
+            )
+            val savedRules = loadCustomRules()
+            val ruleResult = applyRuleDefinitions(
+                rawNotification = rawNotification,
+                merchant = merchant,
+                transaction = baseTransaction,
+                rules = savedRules
+            )
+            val candidate = ruleResult.transaction
+
             var isVerified = true
-            var notes = "Verified successfully."
+            var notes = ruleResult.appliedRule?.let { "Rule matched: ${it.displayLabel()}. " } ?: ""
             val rawLower = rawNotification.lowercase(Locale.ROOT)
 
-            if (merchant != "Unknown" && merchant != "Error" && !merchantAppearsInRaw(rawLower, merchant)) {
+            if (candidate.merchant != "Unknown" && candidate.merchant != "Error" && !merchantAppearsInRaw(rawLower, candidate.merchant)) {
                 isVerified = false
-                notes = "FAILED: Merchant '$merchant' not found in original text."
+                notes += "FAILED: Merchant '${candidate.merchant}' not found in original text."
             }
 
-            val amountString = amount.toString()
-            if (amount > 0.0 && !rawLower.contains(amountString)) {
+            val amountString = candidate.amount.toString()
+            if (candidate.amount > 0.0 && !amountAppearsInRaw(rawLower, candidate.amount)) {
                 isVerified = false
                 notes = "FAILED: Amount '$amountString' not found in original text."
             }
 
-            if (!allowedCategories().contains(category)) {
+            if (!allowedCategories().contains(candidate.category)) {
                 isVerified = false
-                notes = "FAILED: Category '$category' is not a valid option."
+                notes = "FAILED: Category '${candidate.category}' is not a valid option."
             }
 
-            ExtractedTransaction(merchant, amount, category, isVerified, notes)
+            if (isVerified) {
+                if (notes.isBlank()) notes = "Verified successfully." else notes += " Verified successfully."
+            }
+
+            candidate.copy(isVerified = isVerified, verificationNotes = notes.trim())
 
         } catch (e: Exception) {
             Log.e("LlmPipeline", "Failed to parse JSON", e)
@@ -268,6 +311,56 @@ Output only valid JSONS
         val normalizedRaw = rawLower.replace(Regex("[^a-z0-9]"), "")
         val normalizedMerchant = merchantLower.replace(Regex("[^a-z0-9]"), "")
         return normalizedMerchant.isNotBlank() && normalizedRaw.contains(normalizedMerchant)
+    }
+
+    private fun amountAppearsInRaw(rawLower: String, amount: Double): Boolean {
+        val normalizedRaw = rawLower.replace(",", "")
+        val candidates = buildSet {
+            add(String.format(Locale.US, "%.2f", amount))
+            add(String.format(Locale.US, "%.1f", amount))
+            add(String.format(Locale.US, "%.0f", amount))
+        }
+
+        if (candidates.any { normalizedRaw.contains(it) }) return true
+
+        val numberRegex = Regex("""\d+(?:\.\d{1,2})?""")
+        return numberRegex.findAll(normalizedRaw).any {
+            val parsed = it.value.toDoubleOrNull() ?: return@any false
+            abs(parsed - amount) < 0.01
+        }
+    }
+
+    private fun buildInitialPrompt(rawNotification: String): String {
+        return """
+Allowed categories (exact spelling): ${allowedCategoryText()}
+
+Notification text:
+$rawNotification
+
+Return JSON only with keys merchant, amount, category.
+""".trimIndent()
+    }
+
+    private fun buildRetryPrompt(rawNotification: String, previousJson: String, validationError: String): String {
+        return """
+Re-evaluate this notification and fix the extraction.
+
+Allowed categories (exact spelling): ${allowedCategoryText()}
+Original notification:
+$rawNotification
+
+Previous JSON:
+$previousJson
+
+Validation error:
+$validationError
+
+Correction rules:
+- Keep merchant text grounded in the original notification.
+- Choose the transaction amount, not balance/available/reward/reference numbers.
+- Do not abbreviate category names.
+- Return JSON only with keys merchant, amount, category.
+""".trimIndent()
     }
 
     private fun extractFirstCompleteJsonObject(text: String): String? {
@@ -299,7 +392,7 @@ Output only valid JSONS
             } else if (c == '}') {
                 if (depth > 0) {
                     depth--
-                    if (depth == 0 && start >= 0) {
+                    if (depth == 0) {
                         return text.substring(start, i + 1)
                     }
                 }
@@ -338,11 +431,22 @@ Output only valid JSONS
             }
 
             val customArray = root.optJSONArray("customBudgetCategories") ?: JSONArray()
+            val hiddenIds = root.optJSONArray("hiddenCategoryIds")?.let { hiddenArray ->
+                buildSet {
+                    for (index in 0 until hiddenArray.length()) {
+                        hiddenArray.optString(index).takeIf { it.isNotBlank() }?.let { add(it.removePrefix("builtin:")) }
+                    }
+                }
+            } ?: emptySet()
+
+            list.removeAll { hiddenIds.contains(it.id) }
+
             for (index in 0 until customArray.length()) {
                 val item = customArray.optJSONObject(index) ?: continue
                 val id = item.optString("id").ifBlank { continue }
                 val label = item.optString("label").ifBlank { continue }
                 val emoji = item.optString("emoji").ifBlank { "📁" }
+                if (hiddenIds.contains(id)) continue
                 list += CategoryDefinition(id = id, label = label, emoji = emoji, isCustom = true)
             }
 
@@ -350,6 +454,43 @@ Output only valid JSONS
         } catch (_: Throwable) {
             Category.entries.map { it.toDefinition() }
         }
+    }
+
+    private fun parseRuleDefinitions(array: JSONArray): List<RuleDefinition> {
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.opt(index)
+                when (item) {
+                    is JSONObject -> {
+                        val id = item.optString("id").ifBlank { continue }
+                        val field = runCatching { RuleField.valueOf(item.optString("matchField")) }.getOrNull() ?: continue
+                        val query = item.optString("query").trim()
+                        val targetCategory = item.optString("targetCategory").trim()
+                        if (query.isBlank() || targetCategory.isBlank()) continue
+                        add(RuleDefinition(id = id, matchField = field, query = query, targetCategory = targetCategory))
+                    }
+                    is String -> {
+                        parseLegacyRuleString(item)?.let { add(it) }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun parseLegacyRuleString(raw: String): RuleDefinition? {
+        val trimmed = raw.trim()
+        if (trimmed.isBlank()) return null
+        val parts = trimmed.split(Regex("\\s*[=:>]\\s*"), limit = 2)
+        if (parts.size != 2) return null
+        val query = parts[0].trim()
+        val targetCategory = parts[1].trim()
+        if (query.isBlank() || targetCategory.isBlank()) return null
+        return RuleDefinition(
+            id = "legacy_${trimmed.hashCode()}",
+            matchField = RuleField.MERCHANT,
+            query = query,
+            targetCategory = targetCategory
+        )
     }
 
     fun getBestLlmDevice(): String {

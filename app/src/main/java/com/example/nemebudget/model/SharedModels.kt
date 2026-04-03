@@ -14,7 +14,7 @@ data class Transaction(
     val isAiParsed: Boolean,
     val confidence: Float,
     val rawNotificationText: String = "",
-    val type: TransactionType = TransactionType.EXPENSE  // Default to expense for backward compatibility
+    val type: TransactionType = TransactionType.EXPENSE
 )
 
 data class CategoryDefinition(
@@ -60,6 +60,20 @@ data class CustomBudgetCategory(
     val limit: Double
 )
 
+enum class RuleField(val label: String) {
+    MERCHANT("Merchant"),
+    RAW_TEXT("Notification text")
+}
+
+data class RuleDefinition(
+    val id: String,
+    val matchField: RuleField,
+    val query: String,
+    val targetCategory: String
+) {
+    fun displayLabel(): String = "${matchField.label}: $query → $targetCategory"
+}
+
 fun Category.toDefinition(): CategoryDefinition = CategoryDefinition(
     id = name,
     label = label,
@@ -67,7 +81,7 @@ fun Category.toDefinition(): CategoryDefinition = CategoryDefinition(
     isCustom = false
 )
 
-fun AppSettings.transactionCategoryOptions(): List<CategoryDefinition> {
+fun AppSettings.allCategoryOptions(): List<CategoryDefinition> {
     val customCategories = customBudgetCategories.map {
         CategoryDefinition(id = it.id, label = it.label, emoji = it.emoji, isCustom = true)
     }
@@ -82,21 +96,36 @@ fun AppSettings.transactionCategoryOptions(): List<CategoryDefinition> {
     return builtInWithPresentations + customCategories
 }
 
+fun AppSettings.activeCategoryOptions(): List<CategoryDefinition> {
+    return allCategoryOptions().filterNot { hiddenCategoryIds.contains(it.id) }
+}
+
+fun AppSettings.transactionCategoryOptions(): List<CategoryDefinition> = activeCategoryOptions()
+
 fun AppSettings.resolveCategoryById(categoryId: String): CategoryDefinition? {
-    return transactionCategoryOptions().firstOrNull { it.id.equals(categoryId, ignoreCase = true) }
+    return allCategoryOptions().firstOrNull { it.id.equals(categoryId, ignoreCase = true) }
 }
 
 fun AppSettings.resolveCategoryByLabel(categoryLabel: String): CategoryDefinition? {
-    return transactionCategoryOptions().firstOrNull { it.label.equals(categoryLabel, ignoreCase = true) }
+    return allCategoryOptions().firstOrNull { it.label.equals(categoryLabel, ignoreCase = true) }
+}
+
+fun AppSettings.resolveActiveCategoryById(categoryId: String): CategoryDefinition? {
+    return activeCategoryOptions().firstOrNull { it.id.equals(categoryId, ignoreCase = true) }
+}
+
+fun AppSettings.resolveActiveCategoryByLabel(categoryLabel: String): CategoryDefinition? {
+    return activeCategoryOptions().firstOrNull { it.label.equals(categoryLabel, ignoreCase = true) }
 }
 
 data class AppSettings(
     val primaryBank: String = "",
     val ignoredApps: Set<String> = emptySet(),
-    val customRules: List<String> = emptyList(),
+    val customRules: List<RuleDefinition> = emptyList(),
     val budgetLimits: Map<Category, Double> = emptyMap(),
     val categoryPresentation: Map<String, CategoryPresentation> = emptyMap(),
-    val customBudgetCategories: List<CustomBudgetCategory> = emptyList()
+    val customBudgetCategories: List<CustomBudgetCategory> = emptyList(),
+    val hiddenCategoryIds: Set<String> = emptySet()
 )
 
 data class RejectedNotification(
@@ -111,7 +140,7 @@ data class ModelStatus(
     val isDownloaded: Boolean,
     val downloadProgress: Float,
     val modelSizeLabel: String,
-    val isGpuOptimized: Boolean = false // Tracks if the TVM shaders have been compiled for this specific device
+    val isGpuOptimized: Boolean = false
 )
 
 sealed interface ProcessingState {

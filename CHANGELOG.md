@@ -3,6 +3,72 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-04-02 - AI Assistant (Settings Cleanup + Rule Editing UX)
+
+### What Changed
+* Removed the `Primary Bank` input from the visible Settings page while leaving the stored setting intact.
+* Cleaned up `SettingsScreen.kt` by keeping the page focused on permissions, ignore apps, rule management, model status, and test notifications.
+* Updated `ManageRulesScreen.kt`:
+  * added an explicit `Edit` action for each rule,
+  * allowed editing existing typed rules via the same bottom sheet,
+  * fixed category chip labels so they stay on one line.
+
+### Why This Was Done
+1. The primary bank field was adding noise without affecting parsing behavior yet.
+2. Users needed a direct edit path for rules, not only add/remove.
+3. Category text wrapping was making the UI look broken, especially for labels like Transport.
+
+## 2026-04-02 - AI Assistant (Typed Manage Rules Screen)
+
+### What Changed
+* Replaced the freeform rules entry in `SettingsScreen.kt` with a `Manage Rules` launcher card.
+* Added `ManageRulesScreen.kt`:
+  * searchable list of rules,
+  * floating add-rule button,
+  * slide-up add sheet,
+  * typed field selector (`Merchant` or `Notification text`),
+  * category picker chips.
+* Updated the rule data model in `SharedModels.kt` to use `RuleDefinition` and `RuleField`.
+* Updated `LlmPipeline` to apply typed rules after LLM extraction, before verification.
+* Updated `TransactionsViewModel` so the teach-AI flow creates typed rules instead of string rules.
+
+### Why This Was Done
+1. The user-facing rule experience is now simpler than regex and easier to teach/understand.
+2. Users can choose what field they’re matching instead of writing patterns.
+3. The rules still run deterministically after the LLM, which preserves local-first predictability.
+
+## 2026-04-02 - AI Assistant (Regex Rule Post-Processing for LLM Output)
+
+### What Changed
+* Added a regex rule engine in `app/src/main/java/com/example/nemebudget/llm/RegexRuleEngine.kt`.
+* Updated `LlmPipeline` so `customRules` are applied after JSON extraction but before final verification.
+* Updated `TransactionsViewModel` so learned rules are saved as escaped regex patterns tied to the replacement category.
+* Updated `SettingsScreen` to explain the `Regex = Category` rule format.
+
+### Why This Was Done
+1. The rules feature is now deterministic: the model extracts first, then user regex rules can override the category in a predictable way.
+2. Using regex makes the feature flexible enough to handle merchant variants like `Chevron|Shell` without needing more LLM prompting.
+3. Applying rules post-LLM keeps the model prompt simpler and makes the user’s rules easier to reason about.
+
+## 2026-04-02 - AI Assistant (Unified Category Soft Delete)
+
+### What Changed
+* Updated the category model in `app/src/main/java/com/example/nemebudget/model/SharedModels.kt`:
+  * Added `hiddenCategoryIds` to `AppSettings`.
+  * Added `allCategoryOptions()`, `activeCategoryOptions()`, and active resolver helpers.
+* Updated budget delete flow in `app/src/main/java/com/example/nemebudget/ui/screens/BudgetsScreen.kt`:
+  * The edit sheet now deletes categories for both built-in and custom entries.
+  * Delete now archives the category instead of treating built-ins as reset-only.
+* Updated repository contracts and implementations:
+  * Added `softDeleteBudgetCategory(...)` to `AppRepository`.
+  * Persisted archived category IDs in `RealRepository` and mirrored the behavior in `FakeRepository`.
+* Updated `LlmPipeline` and transaction/category consumers to use the active catalog only for new extraction/pickers while preserving historical resolution.
+
+### Why This Was Done
+1. Built-in and custom categories now behave like one catalog from the user’s perspective.
+2. Soft delete preserves history while removing archived categories from pickers and future LLM outputs.
+3. This keeps the app flexible without breaking older transactions that reference archived category IDs.
+
 ## 2026-04-02 - AI Assistant (Default Test Notification Updated to Card Guard Sample)
 
 ### What Changed
