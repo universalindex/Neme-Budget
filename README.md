@@ -8,7 +8,7 @@
 ### 1. Onboarding Flow
 - **Privacy Pitch**: Introduces the "100% Local Privacy" concept.
 - **Permission Gate**: Guides users to grant `BIND_NOTIFICATION_LISTENER_SERVICE` permission.
-- **"Brain Download"**: A progress screen for downloading the local SLM model (e.g., Gemma 2B) to the device.
+- **"Brain Download"**: A progress screen for downloading the local SLM model (**qwen3 0.6B q4f16**) to the device.
 - **Quick Config**: Initial input for the user's primary bank to aid AI context.
 
 ### 2. Dashboard (Home Screen)
@@ -34,7 +34,7 @@
 - **Frontend**: Kotlin / Jetpack Compose (Android Native)
 - **Backend/Logic**: Entirely local to the device.
 - **Data Scraper**: Native Android `NotificationListenerService`.
-- **AI Engine**: MediaPipe LLM Inference API or MLC LLM for on-device inference using a ~2B parameter model (e.g., Gemma 2B or Llama 3.2 1B). Leverages the phone's NPU/GPU if available.
+- **AI Engine**: MLC LLM for on-device inference using the **qwen3 0.6B q4f16** model. This model was specifically selected for its ability to generate high-quality, structured JSON output at a small parameter count, ensuring fast and reliable parsing on mobile hardware.
 - **Database**: Local SQLite database, encrypted with SQLCipher.
 
 ## Hackathon Context
