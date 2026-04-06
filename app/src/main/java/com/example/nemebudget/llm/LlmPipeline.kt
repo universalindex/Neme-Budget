@@ -44,6 +44,9 @@ class LlmPipeline(private val context: Context) {
 
     private companion object {
         const val MODEL_FOLDER_NAME = "Qwen3-0.6B-q4f16_1-MLC"
+        const val WARMUP_NOTIFICATION_SAMPLE = "Card Guard Credit Card *3320 $9.13 at SQ *KIWI LOCO FROZEN Y. Tap for details."
+        private val engineLock = Any()
+        private var sharedEngine: MLCEngine? = null
     }
 
     private val modelPath: String
@@ -100,14 +103,17 @@ Notification: America First Alert: Card Guard Credit Card *3320 $9.13 at SQ *Kiw
 Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
 """.trimIndent()
 
-    private var mlcEngine: MLCEngine? = null
+    init {
+        // Ensure the TVM env var is present before any potential engine creation path.
+        PersistentShaderCache.initialize(context.applicationContext)
+    }
 
     fun isModelInstalled(): Boolean {
         return ModelArchiveInstaller.isModelReady(File(modelPath))
     }
 
     fun isPersistentShaderCacheReady(): Boolean {
-        return PersistentShaderCache.isReady(context)
+        return PersistentShaderCache.isReady(context, computeModelFingerprint())
     }
 
     fun getPersistentShaderCacheDir(): File = shaderCacheDir
@@ -238,66 +244,125 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
         }
     }
 
-    private fun loadEngine() {
-        if (mlcEngine != null) {
-            Log.d("LlmPipeline", "MLC Engine already loaded.")
-            return
+    private fun loadEngine(): MLCEngine {
+        synchronized(engineLock) {
+            sharedEngine?.let {
+                Log.d("LlmPipeline", "MLC Engine already loaded.")
+                return it
+            }
         }
 
         if (!ensureModelAvailable()) {
             throw IllegalStateException("Missing MLC model files for '$MODEL_FOLDER_NAME' and no installable ZIP archive was found.")
         }
+
+        // Re-apply env var right before first native init to cover service/UI entry ordering.
+        PersistentShaderCache.initialize(context.applicationContext)
         
         Log.d("LlmPipeline", "WAKING UP ENGINE: Attempting to load Qwen with lib '${modelLib}' from path '${modelPath}'")
         try {
             val engine = MLCEngine()
             engine.reload(modelPath, modelLib)
-            mlcEngine = engine
+            synchronized(engineLock) {
+                sharedEngine = engine
+            }
             Log.d("LlmPipeline", "MLC Engine loaded successfully.")
+            return engine
         } catch (e: Exception) {
             Log.e("LlmPipeline", "CRITICAL: Failed to load MLC Engine with lib '${modelLib}'", e)
-            mlcEngine = null 
+            synchronized(engineLock) {
+                sharedEngine = null
+            }
             throw e 
         }
     }
 
+    private fun currentEngine(): MLCEngine? = synchronized(engineLock) { sharedEngine }
+
     fun unloadEngine() {
-        mlcEngine?.unload()
-        mlcEngine = null
+        synchronized(engineLock) {
+            sharedEngine?.unload()
+            sharedEngine = null
+        }
         Log.d("LlmPipeline", "MLC Engine unloaded from RAM.")
     }
 
     /**
-     * Warms up the engine to force AOT (Ahead-of-Time) shader compilation.
+     * Warms up the engine to force shader compilation, then unloads it so the cache can flush to disk.
      */
     suspend fun warmUpEngine(): Boolean = withContext(Dispatchers.IO) {
         try {
-            if (mlcEngine == null) loadEngine()
-            Log.d("LlmPipeline", "Warming up engine to compile shaders into '${shaderCacheDir.absolutePath}'...")
-            
+            val cacheReadyBefore = PersistentShaderCache.hasCacheArtifacts(context)
+            Log.d(
+                "LlmPipeline",
+                "Warmup preflight: cacheReadyBefore=$cacheReadyBefore dir='${shaderCacheDir.absolutePath}'"
+            )
+
+            if (cacheReadyBefore) {
+                Log.d("LlmPipeline", "Shader cache already exists on disk; skipping compilation pass.")
+                computeModelFingerprint()?.let { PersistentShaderCache.markWarmupComplete(context, it) }
+                return@withContext true
+            }
+
+            val engine = currentEngine() ?: loadEngine()
+            Log.d("LlmPipeline", "Shader cache missing; starting warmup-and-kill compilation sequence...")
+
             val messages = listOf(
                 OpenAIProtocol.ChatCompletionMessage(
                     role = OpenAIProtocol.ChatCompletionRole.user,
-                    content = "Warmup."
+                    content = "Reply with exactly one word: ok."
                 )
             )
-            
-            val channel = mlcEngine?.chat?.completions?.create(
-                messages = messages,
-                response_format = OpenAIProtocol.ResponseFormat(
-                    type = "json_object",
-                    schema = jsonSchema()
-                ),
-                max_tokens = 1 
+            val startTime = System.currentTimeMillis()
+            var streamedChars = 0
+
+            try {
+                val channel = engine.chat.completions.create(
+                    messages = messages,
+                    response_format = OpenAIProtocol.ResponseFormat(
+                        type = "json_object",
+                        schema = jsonSchema()
+                    ),
+                    max_tokens = 1
+                )
+
+                channel?.consumeEach { response ->
+                    streamedChars += response.choices.firstOrNull()?.delta?.content?.text?.length ?: 0
+                }
+            } finally {
+                unloadEngine()
+                PersistentShaderCache.syncToDisk()
+            }
+
+            val cacheReadyAfter = PersistentShaderCache.hasCacheArtifacts(context)
+            if (cacheReadyAfter) {
+                computeModelFingerprint()?.let { PersistentShaderCache.markWarmupComplete(context, it) }
+            }
+
+            val elapsed = System.currentTimeMillis() - startTime
+            Log.d(
+                "LlmPipeline",
+                "Warmup-and-kill finished in ${elapsed}ms (streamedChars=$streamedChars). cacheReadyAfter=$cacheReadyAfter"
             )
-            
-            channel?.consumeEach { /* discard */ }
-            Log.d("LlmPipeline", "Engine warmup complete! Shader cache directory now ready=${PersistentShaderCache.isReady(context)}")
-            true
+            cacheReadyAfter
         } catch (e: Exception) {
             Log.e("LlmPipeline", "Warmup failed", e)
             false
         }
+    }
+
+    /**
+     * Flushes any shader artifacts to disk without unloading the engine.
+     * Useful after real notification processing where we want persistence but keep runtime warm.
+     */
+    suspend fun flushShaderCacheToDisk(): Boolean = withContext(Dispatchers.IO) {
+        PersistentShaderCache.syncToDisk()
+        val cacheReady = PersistentShaderCache.hasCacheArtifacts(context)
+        if (cacheReady) {
+            computeModelFingerprint()?.let { PersistentShaderCache.markWarmupComplete(context, it) }
+        }
+        Log.d("LlmPipeline", "Post-process cache flush complete; cacheReady=$cacheReady")
+        cacheReady
     }
 
     /**
@@ -337,7 +402,7 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
 
         var llmJsonString = """{"merchant": "Error", "amount": 0.0, "category": "Other"}"""
         try {
-            if (mlcEngine == null) loadEngine()
+            val engine = currentEngine() ?: loadEngine()
 
             val messages = listOf(
                 OpenAIProtocol.ChatCompletionMessage(
@@ -353,7 +418,7 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
             val startTime = System.currentTimeMillis()
 
             val sb = StringBuilder()
-            val channel = mlcEngine?.chat?.completions?.create(
+            val channel = engine.chat.completions.create(
                 messages = messages,
                 response_format = OpenAIProtocol.ResponseFormat(
                     type = "json_object",
@@ -382,7 +447,6 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
 
         } catch (e: Exception) {
             Log.e("LlmPipeline", "MLC Engine inference failed", e)
-            unloadEngine()
         }
         return llmJsonString
     }
@@ -653,6 +717,12 @@ Correction rules:
     }
 
     fun getBestLlmDevice(): String {
-        return if (mlcEngine != null) "MLC Loaded" else "Unknown (Engine not loaded)"
+        return if (currentEngine() != null) "MLC Loaded" else "Unknown (Engine not loaded)"
+    }
+
+    private fun computeModelFingerprint(): String? {
+        val sentinel = File(modelPath, "mlc-chat-config.json")
+        if (!sentinel.isFile) return null
+        return "${sentinel.length()}_${sentinel.lastModified()}"
     }
 }

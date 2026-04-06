@@ -62,6 +62,8 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
             val success = pipeline.warmUpEngine()
             if (success) {
                 repo.markGpuOptimized()
+            } else {
+                repo.refreshModelStatus()
             }
             _isOptimizing.value = false
         }

@@ -126,7 +126,6 @@ private fun MainApp() {
     var onboardingCompleted by remember(context) {
         mutableStateOf(onboardingPrefs.getBoolean(KEY_ONBOARDING_COMPLETED, false))
     }
-
     var showListenerPermissionDialog by remember { mutableStateOf(false) }
     var showModelImportDialog by remember { mutableStateOf(false) }
     var modelImportError by remember { mutableStateOf<String?>(null) }
@@ -151,9 +150,9 @@ private fun MainApp() {
             isImportingModel = false
 
             if (installed) {
-                repo.refreshModelStatus()
                 modelImportError = null
                 showModelImportDialog = false
+                repo.refreshModelStatus()
             } else {
                 modelImportError = "Could not install model from selected ZIP. Verify it contains mlc-chat-config.json."
             }
@@ -171,18 +170,7 @@ private fun MainApp() {
         }
     }
 
-    val postNotificationsPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { /* no-op: status is checked on recomposition */ }
-
     if (!onboardingCompleted) {
-        LaunchedEffect(Unit) {
-            val installedFromAssets = pipeline.installBundledModelIfPresent()
-            if (installedFromAssets) {
-                repo.refreshModelStatus()
-            }
-        }
-
         OnboardingFlowScreen(
             modelStatus = modelStatus,
             isImportingModel = isImportingModel,
@@ -203,13 +191,12 @@ private fun MainApp() {
         return
     }
 
+    val postNotificationsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* no-op: status is checked on recomposition */ }
+
     LaunchedEffect(Unit) {
         settingsViewModel.processOnAppOpenIfNeeded()
-
-        val installedFromAssets = pipeline.installBundledModelIfPresent()
-        if (installedFromAssets) {
-            repo.refreshModelStatus()
-        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !isPostNotificationsGranted(context)) {
             postNotificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)

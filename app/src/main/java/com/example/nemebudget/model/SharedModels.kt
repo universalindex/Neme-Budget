@@ -66,8 +66,8 @@ enum class RuleField(val label: String) {
 }
 
 enum class RuleAction(val label: String) {
-    SET_CATEGORY("Set Category"),
-    SET_MERCHANT("Set Merchant")
+    SET_CATEGORY("Set category"),
+    SET_MERCHANT("Set merchant")
 }
 
 data class RuleDefinition(
@@ -78,12 +78,9 @@ data class RuleDefinition(
     val action: RuleAction = RuleAction.SET_CATEGORY,
     val forcedMerchant: String? = null
 ) {
-    fun displayLabel(): String {
-        return if (action == RuleAction.SET_MERCHANT) {
-            "${matchField.label}: $query → merchant:${forcedMerchant.orEmpty()}"
-        } else {
-            "${matchField.label}: $query → $targetCategory"
-        }
+    fun displayLabel(): String = when (action) {
+        RuleAction.SET_CATEGORY -> "${matchField.label}: $query → $targetCategory"
+        RuleAction.SET_MERCHANT -> "${matchField.label}: $query → merchant '$forcedMerchant'"
     }
 }
 

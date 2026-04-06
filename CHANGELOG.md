@@ -3,6 +3,101 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-04-06 - AI Assistant (Post-Processing Cache Sync Without Unload)
+
+### What Changed
+* Added `flushShaderCacheToDisk()` to `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt` to sync filesystem and record cache readiness **without unloading** `MLCEngine`.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt` to call that flush after successful notification processing and then refresh model status.
+
+### Why This Was Done
+1. Real notification processing is the path that reliably triggers compilation work.
+2. We want to persist artifacts after that work while avoiding the potentially disruptive unload boundary.
+3. This creates a cleaner experiment than warmup-only persistence and keeps the runtime warm in-process.
+
+### Verification
+* Re-ran `:app:compileDebugKotlin` after this change.
+
+## 2026-04-06 - AI Assistant (Post-Revert Kotlin Contract Recovery)
+
+### What Changed
+* Restored typed rule model contract in `app/src/main/java/com/example/nemebudget/model/SharedModels.kt` (`RuleAction`, plus `action`/`forcedMerchant` on `RuleDefinition`).
+* Updated `app/src/main/java/com/example/nemebudget/MainActivity.kt` onboarding call site to pass required `OnboardingFlowScreen` model-import parameters and moved related state above the onboarding early return.
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/TransactionsViewModel.kt` learned-rule creation to use the typed rule schema explicitly.
+
+### Why This Was Done
+1. Partial reverts left the app with mixed old/new contracts between models and call sites.
+2. `LlmPipeline` and `RealRepository` expect the typed rule schema, while `SharedModels` had reverted to legacy fields.
+3. `OnboardingFlowScreen` signature requires import-related params that were no longer being provided.
+
+### Verification
+* Re-ran `:app:compileDebugKotlin` after this fix.
+
+## 2026-04-06 - AI Assistant (Post-Revert Gradle Asset Pack Wiring Fix)
+
+### What Changed
+* Restored `include(":model_weights")` in `settings.gradle.kts`.
+* Restored version-catalog alias `android-asset-pack` in `gradle/libs.versions.toml`.
+* Restored root plugin registration `alias(libs.plugins.android.asset.pack) apply false` in `build.gradle.kts`.
+
+### Why This Was Done
+1. `app/build.gradle.kts` still declares `assetPacks.add(":model_weights")`.
+2. After reverting, Gradle could no longer resolve that module/plugin combination and failed at configuration.
+3. Restoring these three wiring points brings the module graph back into a consistent state.
+
+### Verification
+* Re-ran `:app:compileDebugKotlin` after this fix.
+
+## 2026-04-06 - AI Assistant (Warmup Disk Flush for Force-Stop Survival)
+
+### What Changed
+* Updated `PersistentShaderCache.kt` to persist warmup state to a disk file in app storage instead of only relying on in-memory / preference state.
+* Added an explicit filesystem sync helper (`Os.sync()`) so shader-cache writes are flushed after the engine unloads.
+* Updated `LlmPipeline.kt` warmup flow to call the disk sync step after unload and before checking cache readiness.
+
+### Why This Was Done
+1. Unloading the engine alone does not guarantee the OS has flushed recently written cache files to persistent storage.
+2. A force-stop can cut off pending writes if the filesystem is still holding them in buffers.
+3. Writing a disk-backed warmup record and syncing the filesystem makes the post-warmup state much more durable across process death.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after these changes.
+
+## 2026-04-06 - AI Assistant (Warmup Button Uses Production Path + Truth-Based Status)
+
+### What Changed
+* Updated `app/src/main/java/com/example/nemebudget/llm/LlmPipeline.kt` warmup routine to run the same request shape used by real extraction (system prompt + realistic notification prompt + `max_tokens=220`) instead of a tiny `"Warmup."` request.
+* Added richer warmup logs in `LlmPipeline` with elapsed time and streamed output size so warmup behavior is observable in logcat.
+* Updated `app/src/main/java/com/example/nemebudget/repository/RealRepository.kt` model status logic so `isGpuOptimized` is now derived directly from current cache readiness for the installed model fingerprint, rather than requiring a prior toggle state.
+* Updated `RealRepository.markGpuOptimized()` to clear stale warmup markers when readiness is false.
+* Updated `app/src/main/java/com/example/nemebudget/viewmodel/SettingsViewModel.kt` so pressing **Warm Cache Now** always refreshes model status, even if warmup fails.
+
+### Why This Was Done
+1. A tiny warmup request can miss the heavier generation path used by real notifications, causing the button to appear ineffective.
+2. Status should reflect current reality on device, not historical button state.
+3. Explicit warmup logs make it easier to diagnose whether optimization work actually ran.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after these changes.
+
+## 2026-04-06 - AI Assistant (Persistent Warmup State + Process-Wide MLC Engine)
+
+### What Changed
+* Updated `PersistentShaderCache.kt` to support model-fingerprint warmup markers in SharedPreferences and recursive cache artifact detection.
+* Updated `LlmPipeline.kt` to:
+  * initialize `TVM_OPENCL_CACHE_DIR` defensively before first engine creation,
+  * keep a process-wide singleton `MLCEngine` guarded by a lock,
+  * avoid unloading the engine after every inference exception,
+  * record successful warmup against the current model fingerprint so status can survive app restarts.
+* Updated `RealRepository.kt` model-status logic to clear stale warmup markers when model files are missing or the model fingerprint changes.
+
+### Why This Was Done
+1. The previous readiness check only trusted physical files in `tvm_opencl_cache`, which can remain empty on some devices/runtimes even when warmup succeeds.
+2. Recreating the engine repeatedly increases latency and can make logs look like warmup is not sticking.
+3. Warmup/optimization status now tracks a specific model snapshot and resets cleanly when weights change.
+
+### Verification
+* Ran `:app:compileDebugKotlin` successfully after these changes.
+
 ## 2026-04-03 - AI Assistant (Persistent TVM/MLC Shader Cache Bootstrap)
 
 ### What Changed

@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Required to post test notifications on Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Legacy permission for scanning public Downloads on Android 12L and below -->
     <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
+        android:name="android.permission.READ_EXTERNAL_STORAGE" />
 
     <application
         android:name=".NemeBudgetApplication"
@@ -27,6 +27,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:label="@string/app_name"
             android:theme="@style/Theme.NemeBudget">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

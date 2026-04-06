@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.example.nemebudget.PersistentShaderCache
 import com.example.nemebudget.db.AppDatabase
 import com.example.nemebudget.db.RawNotification
 import com.example.nemebudget.db.toEntity
@@ -371,6 +372,13 @@ class RealRepository(
                 }
             }
 
+            if (processedCount > 0) {
+                val cacheReady = llmPipeline.flushShaderCacheToDisk()
+                Log.d(TAG, "Post-processing cache sync complete; cacheReady=$cacheReady")
+            }
+
+            refreshModelStatus()
+
             Log.d(TAG, "Processing complete: $processedCount/$total successful")
             processedCount
         }
@@ -427,6 +435,7 @@ class RealRepository(
             computeModelFingerprint()?.let { editor.putString(modelFingerprintKey, it) }
         } else {
             editor.remove(modelFingerprintKey)
+            PersistentShaderCache.clearWarmupMark(context)
         }
         editor.apply()
         modelStatusFlow.value = buildCurrentModelStatus()
@@ -692,6 +701,7 @@ class RealRepository(
     private fun buildCurrentModelStatus(): ModelStatus {
         val isInstalled = llmPipeline.isModelInstalled()
         if (!isInstalled) {
+            PersistentShaderCache.clearWarmupMark(context)
             prefs.edit().putBoolean(gpuOptimizedKey, false).apply()
             return ModelStatus(
                 isDownloaded = false,
@@ -703,21 +713,23 @@ class RealRepository(
 
         val currentFingerprint = computeModelFingerprint()
         val storedFingerprint = prefs.getString(modelFingerprintKey, null)
-        val cacheReady = llmPipeline.isPersistentShaderCacheReady()
-        var gpuOptimized = prefs.getBoolean(gpuOptimizedKey, false) && cacheReady
+        var cacheReady = llmPipeline.isPersistentShaderCacheReady()
+        var gpuOptimized = cacheReady
 
-        if (!cacheReady && gpuOptimized) {
-            gpuOptimized = false
-            prefs.edit().putBoolean(gpuOptimizedKey, false).apply()
+        if (storedFingerprint != null && currentFingerprint != null && storedFingerprint != currentFingerprint) {
+            PersistentShaderCache.clearWarmupMark(context)
+            cacheReady = llmPipeline.isPersistentShaderCacheReady()
+            gpuOptimized = cacheReady
         }
 
-        if (storedFingerprint != null && currentFingerprint != null && storedFingerprint != currentFingerprint && gpuOptimized) {
-            gpuOptimized = false
-            prefs.edit().putBoolean(gpuOptimizedKey, false).apply()
-        }
-        if (currentFingerprint != null) {
-            prefs.edit().putString(modelFingerprintKey, currentFingerprint).apply()
-        }
+        prefs.edit().apply {
+            putBoolean(gpuOptimizedKey, gpuOptimized)
+            if (currentFingerprint != null) {
+                putString(modelFingerprintKey, currentFingerprint)
+            } else {
+                remove(modelFingerprintKey)
+            }
+        }.apply()
 
         return ModelStatus(
             isDownloaded = true,
