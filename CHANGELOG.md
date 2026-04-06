@@ -3,6 +3,72 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-04-03 - AI Assistant (Persistent TVM/MLC Shader Cache Bootstrap)
+
+### What Changed
+* Added `PersistentShaderCache.kt` to create an app-private cache directory (`filesDir/tvm_opencl_cache`) and set `TVM_OPENCL_CACHE_DIR` before engine initialization.
+* Added `NemeBudgetApplication.kt` and registered it in `AndroidManifest.xml` so the cache environment is configured as early as possible at process start.
+* Cleaned the manifest by removing unused namespace/label clutter while keeping the new application hook.
+* Extended `LlmPipeline.kt` with cache-path helpers and clearer warmup logging so shader compilation is intended to land in the persistent cache directory.
+* Updated `RealRepository.kt` so `isGpuOptimized` is derived from real cache readiness plus model fingerprint, rather than acting as a pure optimistic toggle.
+* Updated the Settings UI copy to describe the one-time persistent shader cache warmup in plain language.
+
+### Why This Was Done
+1. The app previously recorded warmup success, but the UI flag could outlive the actual cache state.
+2. Setting the TVM cache environment before `MLCEngine` creation gives the runtime a stable app-private location to persist compiled artifacts.
+3. Tying the flag to cache presence makes the UI reflect what is actually on disk after force-close/reopen.
+
+### Verification
+* Ran `:app:assembleDebug` successfully.
+* Ran `:app:bundleDebug` successfully.
+
+## 2026-04-03 - AI Assistant (PAD Bundled Model Bootstrap + Compile Fixes)
+
+### What Changed
+* Fixed current Kotlin contract mismatches that were blocking compilation:
+  * `SharedModels.kt` now includes `RuleAction` and expands `RuleDefinition` with `action` and `forcedMerchant` (with backward-compatible defaults).
+  * `RuleEngine.kt` now applies both category and merchant override rules.
+  * `MainActivity.kt` now passes the full required `OnboardingFlowScreen` parameters.
+* Added bundled-model bootstrap for install-time Play Asset Delivery in `LlmPipeline.kt`:
+  * `installBundledModelIfPresent()` checks packaged assets for an unzipped model directory containing `mlc-chat-config.json`.
+  * If found, the model is copied into `context.filesDir/Qwen3-0.6B-q4f16_1-MLC` before inference.
+  * Existing Downloads ZIP discovery/install remains as fallback.
+* Updated app startup/onboarding flow in `MainActivity.kt` to attempt bundled model install first and refresh model status before prompting ZIP import.
+* Updated onboarding copy in `OnboardingScreens.kt` to reflect bundled-first behavior with ZIP fallback.
+* Updated `model_weights/src/main/assets/README.md` to explicitly document unzipped asset layout.
+* Added a roadmap item to `DEV2_BACKEND_AI_PLAN.md` for configurable budget period (month vs week).
+
+### Why This Was Done
+1. The project had partial merge drift (UI/pipeline/repository expecting expanded rule schema while model definitions were reverted), causing build failures.
+2. Install-time PAD can ship unzipped model files, so runtime now needs a direct bundled-asset copy path instead of assuming ZIP-only recovery.
+3. Budget-period configurability is a product planning request but is intentionally deferred to the backend roadmap per instruction.
+
+### Verification
+* Ran `:app:assembleDebug` successfully after these changes.
+
+## 2026-04-03 - AI Assistant (Install-Time Play Asset Delivery Scaffold)
+
+### What Changed
+* Added a new asset-pack module at `model_weights/` with `com.android.asset-pack` configured for install-time delivery:
+  * `packName = "model_weights"`
+  * `deliveryType = "install-time"`
+* Updated Gradle wiring so the pack is part of the app bundle build:
+  * `settings.gradle.kts` now includes `:model_weights`.
+  * `gradle/libs.versions.toml` now declares plugin alias `android-asset-pack`.
+  * Root `build.gradle.kts` now exposes `alias(libs.plugins.android.asset.pack) apply false`.
+  * `app/build.gradle.kts` now links the pack via `assetPacks.add(":model_weights")`.
+* Added `model_weights/src/main/assets/README.md` to document where release model files should be placed and how this relates to the current runtime model path contract.
+
+### Why This Was Done
+1. Large local model assets exceed normal base APK/AAB limits, so delivery should be handled through Play Asset Delivery.
+2. Install-time delivery keeps onboarding simpler by making the model pack available with initial install instead of requiring a separate user-driven download.
+3. This change establishes bundle-time structure now while keeping runtime model loading behavior unchanged until the first-run asset-to-files copy path is implemented.
+
+### Verification
+* Ran `:model_weights:tasks --all` successfully and confirmed asset-pack tasks are registered.
+* Ran `:model_weights:assemble` successfully.
+* Attempted `:app:assembleDebug`; compile currently fails due to unrelated pre-existing Kotlin errors in `MainActivity.kt`, `LlmPipeline.kt`, and `RealRepository.kt` (missing `RuleAction`/`RuleDefinition` shape alignment), not from the asset-pack wiring.
+
 ## 2026-04-03 - AI Assistant (Truth-Based Model Status + Merchant Override Rules)
 
 ### What Changed

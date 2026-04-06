@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.util.Log
+import com.example.nemebudget.PersistentShaderCache
 import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.RuleAction
@@ -15,6 +16,7 @@ import com.example.nemebudget.model.toDefinition
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +48,9 @@ class LlmPipeline(private val context: Context) {
 
     private val modelPath: String
         get() = File(context.filesDir, MODEL_FOLDER_NAME).absolutePath
+
+    private val shaderCacheDir: File
+        get() = PersistentShaderCache.cacheDir(context)
 
     private val modelLib = "qwen3_q4f16_1"
 
@@ -101,6 +106,12 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
         return ModelArchiveInstaller.isModelReady(File(modelPath))
     }
 
+    fun isPersistentShaderCacheReady(): Boolean {
+        return PersistentShaderCache.isReady(context)
+    }
+
+    fun getPersistentShaderCacheDir(): File = shaderCacheDir
+
     suspend fun installModelFromZipUri(zipUri: Uri): Boolean = withContext(Dispatchers.IO) {
         val input = runCatching { context.contentResolver.openInputStream(zipUri) }.getOrNull() ?: return@withContext false
         input.use { stream ->
@@ -112,9 +123,20 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
         }
     }
 
+    suspend fun installBundledModelIfPresent(): Boolean = withContext(Dispatchers.IO) {
+        val modelDir = File(modelPath)
+        if (ModelArchiveInstaller.isModelReady(modelDir)) return@withContext true
+        installModelFromBundledAssets(modelDir)
+    }
+
     private fun ensureModelAvailable(): Boolean {
         val modelDir = File(modelPath)
         if (isModelInstalled()) {
+            return true
+        }
+
+        if (installModelFromBundledAssets(modelDir)) {
+            Log.d("LlmPipeline", "Model folder missing; installed from bundled assets.")
             return true
         }
 
@@ -135,6 +157,85 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
 
         Log.w("LlmPipeline", "Model folder missing and no matching ZIP archive was found in Downloads.")
         return false
+    }
+
+    private fun installModelFromBundledAssets(targetDir: File): Boolean {
+        val assetRoot = findBundledModelAssetRoot() ?: return false
+        val stagingDir = File(targetDir.parentFile ?: return false, "${targetDir.name}.asset_staging")
+        stagingDir.deleteRecursively()
+        if (!stagingDir.mkdirs() && !stagingDir.isDirectory) return false
+
+        return try {
+            copyAssetDirectory(assetRoot, stagingDir)
+            if (!ModelArchiveInstaller.isModelReady(stagingDir)) return false
+
+            if (targetDir.exists()) targetDir.deleteRecursively()
+            if (!stagingDir.renameTo(targetDir)) {
+                if (!targetDir.mkdirs() && !targetDir.isDirectory) return false
+                stagingDir.copyRecursively(targetDir, overwrite = true)
+                stagingDir.deleteRecursively()
+            }
+            ModelArchiveInstaller.isModelReady(targetDir)
+        } catch (_: Exception) {
+            false
+        } finally {
+            if (stagingDir.exists()) stagingDir.deleteRecursively()
+        }
+    }
+
+    private fun findBundledModelAssetRoot(): String? {
+        val roots = buildList {
+            add(MODEL_FOLDER_NAME)
+            context.assets.list("")?.forEach { topLevel ->
+                if (topLevel.lowercase(Locale.ROOT).contains("qwen")) {
+                    add(topLevel)
+                }
+            }
+        }.distinct()
+
+        for (root in roots) {
+            findAssetDirectoryContainingSentinel(root)?.let { return it }
+        }
+        return null
+    }
+
+    private fun findAssetDirectoryContainingSentinel(path: String): String? {
+        if (assetFileExists("$path/mlc-chat-config.json")) return path
+
+        val children = runCatching { context.assets.list(path).orEmpty() }.getOrDefault(emptyArray())
+        for (child in children) {
+            val nested = "$path/$child"
+            if (!assetSeemsDirectory(nested)) continue
+            findAssetDirectoryContainingSentinel(nested)?.let { return it }
+        }
+        return null
+    }
+
+    private fun assetSeemsDirectory(path: String): Boolean {
+        val children = runCatching { context.assets.list(path).orEmpty() }.getOrDefault(emptyArray())
+        return children.isNotEmpty()
+    }
+
+    private fun assetFileExists(path: String): Boolean {
+        return runCatching {
+            context.assets.open(path).use { true }
+        }.getOrDefault(false)
+    }
+
+    private fun copyAssetDirectory(assetPath: String, destination: File) {
+        val children = runCatching { context.assets.list(assetPath).orEmpty() }.getOrDefault(emptyArray())
+        if (children.isEmpty()) {
+            destination.parentFile?.mkdirs()
+            context.assets.open(assetPath).use { input ->
+                FileOutputStream(destination).use { output -> input.copyTo(output) }
+            }
+            return
+        }
+
+        if (!destination.exists()) destination.mkdirs()
+        for (child in children) {
+            copyAssetDirectory("$assetPath/$child", File(destination, child))
+        }
     }
 
     private fun loadEngine() {
@@ -172,7 +273,7 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
     suspend fun warmUpEngine(): Boolean = withContext(Dispatchers.IO) {
         try {
             if (mlcEngine == null) loadEngine()
-            Log.d("LlmPipeline", "Warming up engine to compile shaders...")
+            Log.d("LlmPipeline", "Warming up engine to compile shaders into '${shaderCacheDir.absolutePath}'...")
             
             val messages = listOf(
                 OpenAIProtocol.ChatCompletionMessage(
@@ -191,7 +292,7 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
             )
             
             channel?.consumeEach { /* discard */ }
-            Log.d("LlmPipeline", "Engine warmup complete! Shaders cached.")
+            Log.d("LlmPipeline", "Engine warmup complete! Shader cache directory now ready=${PersistentShaderCache.isReady(context)}")
             true
         } catch (e: Exception) {
             Log.e("LlmPipeline", "Warmup failed", e)

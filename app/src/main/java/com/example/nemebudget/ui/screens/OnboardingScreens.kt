@@ -223,7 +223,7 @@ fun OnboardingModelScreen(
             ) {
                 Text("Preparing on-device AI", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Select your local Qwen ZIP so Neme can install on-device AI. This only happens once.",
+                    "Neme first checks bundled on-device AI files. If the model is still missing, select a local Qwen ZIP as fallback.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 LinearProgressIndicator(
@@ -234,7 +234,7 @@ fun OnboardingModelScreen(
                     if (modelStatus.isDownloaded) {
                         "Model ready (${modelStatus.modelSizeLabel})"
                     } else {
-                        "Waiting for model ZIP (${modelStatus.modelSizeLabel})"
+                        "Preparing model (${modelStatus.modelSizeLabel})"
                     },
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -248,7 +248,7 @@ fun OnboardingModelScreen(
                             CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.height(16.dp))
                             Spacer(modifier = Modifier.padding(horizontal = 4.dp))
                         }
-                        Text(if (isImportingModel) "Installing Model..." else "Select Model ZIP")
+                        Text(if (isImportingModel) "Installing Model..." else "Select Model ZIP (Fallback)")
                     }
                 }
                 modelImportError?.takeIf { it.isNotBlank() }?.let { errorText ->

@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "com.example.nemebudget"
     compileSdk = 36
+    assetPacks.add(":model_weights")
 
     defaultConfig {
         applicationId = "com.example.nemebudget"

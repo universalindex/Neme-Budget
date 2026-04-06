@@ -41,7 +41,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.nemebudget.model.CategoryDefinition
-import com.example.nemebudget.model.RuleAction
 import com.example.nemebudget.model.RuleDefinition
 import com.example.nemebudget.model.RuleField
 import com.example.nemebudget.viewmodel.SettingsViewModel
@@ -64,8 +63,7 @@ fun ManageRulesScreen(
 		if (q.isBlank()) settings.customRules else settings.customRules.filter { rule ->
 			rule.displayLabel().contains(q, ignoreCase = true) ||
 				rule.query.contains(q, ignoreCase = true) ||
-				rule.targetCategory.contains(q, ignoreCase = true) ||
-				rule.forcedMerchant.orEmpty().contains(q, ignoreCase = true)
+				rule.targetCategory.contains(q, ignoreCase = true)
 		}
 	}
 
@@ -94,7 +92,7 @@ fun ManageRulesScreen(
 			}
 
 			item { Text("Manage Rules", style = MaterialTheme.typography.headlineSmall) }
-			item { Text("Rules are typed: pick what to match, then choose whether to force category or merchant.", style = MaterialTheme.typography.bodySmall) }
+			item { Text("Rules are typed: pick a field, enter text to match, then choose the category.", style = MaterialTheme.typography.bodySmall) }
 
 			item {
 				OutlinedTextField(
@@ -106,10 +104,6 @@ fun ManageRulesScreen(
 			}
 
 			items(filteredRules, key = { it.id }) { rule ->
-				val outcomeLabel = when (rule.action) {
-					RuleAction.SET_CATEGORY -> "Sets category to \"${rule.targetCategory}\""
-					RuleAction.SET_MERCHANT -> "Sets merchant to \"${rule.forcedMerchant.orEmpty()}\""
-				}
 				Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
 					Row(
 						modifier = Modifier
@@ -119,7 +113,7 @@ fun ManageRulesScreen(
 					) {
 						Column(modifier = Modifier.weight(1f)) {
 							Text(rule.displayLabel(), style = MaterialTheme.typography.titleMedium)
-							Text("Matches ${rule.matchField.label.lowercase()} containing \"${rule.query}\". $outcomeLabel", style = MaterialTheme.typography.bodySmall)
+							Text("Matches ${rule.matchField.label.lowercase()} containing \"${rule.query}\"", style = MaterialTheme.typography.bodySmall)
 						}
 						TextButton(onClick = { editingRule = rule }) { Text("Edit") }
 						IconButton(onClick = { viewModel.removeCustomRule(rule) }) {
@@ -165,15 +159,9 @@ private fun AddRuleSheet(
 	onCreate: (RuleDefinition) -> Unit
 ) {
 	val focusManager = LocalFocusManager.current
-	var matchField by remember(initialRule) {
-		mutableStateOf(
-			if (initialRule?.action == RuleAction.SET_MERCHANT) RuleField.RAW_TEXT else (initialRule?.matchField ?: RuleField.MERCHANT)
-		)
-	}
-	var action by remember(initialRule) { mutableStateOf(initialRule?.action ?: RuleAction.SET_CATEGORY) }
+	var matchField by remember(initialRule) { mutableStateOf(initialRule?.matchField ?: RuleField.MERCHANT) }
 	var query by remember(initialRule) { mutableStateOf(initialRule?.query.orEmpty()) }
 	var selectedCategory by remember(initialRule) { mutableStateOf(initialRule?.targetCategory ?: categoryOptions.firstOrNull()?.label.orEmpty()) }
-	var forcedMerchant by remember(initialRule) { mutableStateOf(initialRule?.forcedMerchant.orEmpty()) }
 
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
@@ -186,30 +174,18 @@ private fun AddRuleSheet(
 			verticalArrangement = Arrangement.spacedBy(16.dp)
 		) {
 			Text(if (initialRule == null) "Add Rule" else "Edit Rule", style = MaterialTheme.typography.titleLarge)
-			Text("Choose match field + action. For merchant action, enter the merchant to force.", style = MaterialTheme.typography.bodySmall)
+			Text("Choose the field to match, enter the text, then pick the category.", style = MaterialTheme.typography.bodySmall)
 
 			Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 				Text("Match field", style = MaterialTheme.typography.labelLarge)
 				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
 					RuleField.entries.forEach { field ->
-						val blockedByAction = action == RuleAction.SET_MERCHANT && field != RuleField.RAW_TEXT
 						InputChip(
 							selected = matchField == field,
-							onClick = {
-								if (!blockedByAction) {
-									matchField = field
-								}
-							},
-							enabled = !blockedByAction,
+							onClick = { matchField = field },
 							label = { Text(field.label) }
 						)
 					}
-				}
-				if (action == RuleAction.SET_MERCHANT) {
-					Text(
-						"Set Merchant rules always match on notification text.",
-						style = MaterialTheme.typography.bodySmall
-					)
 				}
 			}
 
@@ -223,71 +199,34 @@ private fun AddRuleSheet(
 			)
 
 			Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-				Text("Action", style = MaterialTheme.typography.labelLarge)
-				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-					RuleAction.entries.forEach { ruleAction ->
-						InputChip(
-							selected = action == ruleAction,
-							onClick = {
-								action = ruleAction
-								if (ruleAction == RuleAction.SET_MERCHANT) {
-									matchField = RuleField.RAW_TEXT
-								}
-							},
-							label = { Text(ruleAction.label) }
-						)
-					}
-				}
-			}
-
-			if (action == RuleAction.SET_CATEGORY) {
-				Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-					Text("Category", style = MaterialTheme.typography.labelLarge)
-					categoryOptions.chunked(2).forEach { rowCategories ->
-						Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-							rowCategories.forEach { category ->
-								InputChip(
-									selected = selectedCategory == category.label,
-									onClick = { selectedCategory = category.label },
-									label = { Text(category.label) }
-								)
-							}
+				Text("Category", style = MaterialTheme.typography.labelLarge)
+				categoryOptions.chunked(2).forEach { rowCategories ->
+					Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+						rowCategories.forEach { category ->
+							InputChip(
+								selected = selectedCategory == category.label,
+								onClick = { selectedCategory = category.label },
+								label = { Text(category.label) }
+							)
 						}
 					}
 				}
-			} else {
-				OutlinedTextField(
-					value = forcedMerchant,
-					onValueChange = { forcedMerchant = it },
-					modifier = Modifier.fillMaxWidth(),
-					label = { Text("Merchant to force") },
-					placeholder = { Text("Kiwi Loco Frozen Y") },
-					keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-					keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
-				)
 			}
 
 			Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
 				TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
 				TextButton(
 					onClick = {
-						val cleanQuery = query.trim()
-						val cleanMerchant = forcedMerchant.trim().ifBlank { null }
-						val effectiveMatchField = if (action == RuleAction.SET_MERCHANT) RuleField.RAW_TEXT else matchField
 						onCreate(
 							RuleDefinition(
 								id = initialRule?.id ?: "rule_${System.currentTimeMillis()}_${UUID.randomUUID()}",
-								matchField = effectiveMatchField,
-								query = cleanQuery,
-								targetCategory = if (action == RuleAction.SET_CATEGORY) selectedCategory else "Other",
-								action = action,
-								forcedMerchant = cleanMerchant
+								matchField = matchField,
+								query = query.trim(),
+								targetCategory = selectedCategory
 							)
 						)
 					},
-					enabled = query.trim().isNotBlank() &&
-						((action == RuleAction.SET_CATEGORY && selectedCategory.isNotBlank()) ||
-							(action == RuleAction.SET_MERCHANT && forcedMerchant.trim().isNotBlank())),
+					enabled = query.trim().isNotBlank() && selectedCategory.isNotBlank(),
 					modifier = Modifier.weight(1f)
 				) { Text("Save") }
 			}

@@ -74,16 +74,16 @@ data class RuleDefinition(
     val id: String,
     val matchField: RuleField,
     val query: String,
-    val targetCategory: String = "Other",
+    val targetCategory: String,
     val action: RuleAction = RuleAction.SET_CATEGORY,
     val forcedMerchant: String? = null
 ) {
     fun displayLabel(): String {
-        val outcome = when (action) {
-            RuleAction.SET_CATEGORY -> "Category: $targetCategory"
-            RuleAction.SET_MERCHANT -> "Merchant: ${forcedMerchant?.ifBlank { "(missing)" } ?: "(missing)"}"
+        return if (action == RuleAction.SET_MERCHANT) {
+            "${matchField.label}: $query → merchant:${forcedMerchant.orEmpty()}"
+        } else {
+            "${matchField.label}: $query → $targetCategory"
         }
-        return "${matchField.label}: $query -> $outcome"
     }
 }
 

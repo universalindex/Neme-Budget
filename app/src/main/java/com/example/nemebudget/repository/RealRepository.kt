@@ -421,10 +421,15 @@ class RealRepository(
     override fun getModelStatus(): Flow<ModelStatus> = modelStatusFlow
 
     override suspend fun markGpuOptimized() {
-        val editor = prefs.edit().putBoolean(gpuOptimizedKey, true)
-        computeModelFingerprint()?.let { editor.putString(modelFingerprintKey, it) }
+        val cacheReady = llmPipeline.isPersistentShaderCacheReady()
+        val editor = prefs.edit().putBoolean(gpuOptimizedKey, cacheReady)
+        if (cacheReady) {
+            computeModelFingerprint()?.let { editor.putString(modelFingerprintKey, it) }
+        } else {
+            editor.remove(modelFingerprintKey)
+        }
         editor.apply()
-        modelStatusFlow.value = modelStatusFlow.value.copy(isGpuOptimized = true)
+        modelStatusFlow.value = buildCurrentModelStatus()
     }
 
     override suspend fun refreshModelStatus() {
@@ -698,7 +703,14 @@ class RealRepository(
 
         val currentFingerprint = computeModelFingerprint()
         val storedFingerprint = prefs.getString(modelFingerprintKey, null)
-        var gpuOptimized = prefs.getBoolean(gpuOptimizedKey, false)
+        val cacheReady = llmPipeline.isPersistentShaderCacheReady()
+        var gpuOptimized = prefs.getBoolean(gpuOptimizedKey, false) && cacheReady
+
+        if (!cacheReady && gpuOptimized) {
+            gpuOptimized = false
+            prefs.edit().putBoolean(gpuOptimizedKey, false).apply()
+        }
+
         if (storedFingerprint != null && currentFingerprint != null && storedFingerprint != currentFingerprint && gpuOptimized) {
             gpuOptimized = false
             prefs.edit().putBoolean(gpuOptimizedKey, false).apply()

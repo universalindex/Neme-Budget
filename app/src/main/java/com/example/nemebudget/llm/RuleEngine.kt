@@ -19,15 +19,15 @@ internal fun applyRuleDefinitions(
         ruleMatches(rule, rawNotification, merchant)
     } ?: return RuleApplicationResult(transaction)
 
-    val updatedTransaction = when (match.action) {
+    val updated = when (match.action) {
         RuleAction.SET_CATEGORY -> transaction.copy(category = match.targetCategory)
-        RuleAction.SET_MERCHANT -> transaction.copy(merchant = match.forcedMerchant?.trim().orEmpty().ifBlank { transaction.merchant })
+        RuleAction.SET_MERCHANT -> {
+            val forced = match.forcedMerchant?.trim().orEmpty()
+            if (forced.isBlank()) transaction else transaction.copy(merchant = forced)
+        }
     }
 
-    return RuleApplicationResult(
-        transaction = updatedTransaction,
-        appliedRule = match
-    )
+    return RuleApplicationResult(transaction = updated, appliedRule = match)
 }
 
 private fun ruleMatches(rule: RuleDefinition, rawNotification: String, merchant: String): Boolean {

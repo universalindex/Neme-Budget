@@ -230,7 +230,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                             modifier = Modifier.fillMaxWidth()
                         )
                     } else if (!modelStatus.isGpuOptimized) {
-                        Text("Model is ready, but needs to be optimized for your device's GPU. This happens once and takes ~1 minute.")
+                        Text("Model is ready, but its persistent shader cache has not been built for this device yet. This happens once and takes ~1 minute.")
                         Button(
                             onClick = { viewModel.optimizeEngine(pipeline) },
                             enabled = !isOptimizing,
@@ -240,7 +240,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Spacer(modifier = Modifier.size(8.dp))
                             }
-                            Text(if (isOptimizing) "Compiling Shaders..." else "Optimize Now")
+                            Text(if (isOptimizing) "Compiling Shaders..." else "Warm Cache Now")
                         }
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -249,7 +249,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                                 contentDescription = "Model ready",
                                 tint = MaterialTheme.colorScheme.primary
                             )
-                            Text("Qwen 3 0.6B - Ready - ${modelStatus.modelSizeLabel} on device")
+                            Text("Qwen 3 0.6B - Ready - persistent shader cache saved on device (${modelStatus.modelSizeLabel})")
                         }
                     }
                 }

@@ -151,7 +151,7 @@ private fun MainApp() {
             isImportingModel = false
 
             if (installed) {
-                settingsViewModel.refreshModelStatus()
+                repo.refreshModelStatus()
                 modelImportError = null
                 showModelImportDialog = false
             } else {
@@ -171,21 +171,30 @@ private fun MainApp() {
         }
     }
 
-    fun launchModelZipPicker() {
-        if (needsLegacyStoragePermission() && !isLegacyStoragePermissionGranted(context)) {
-            legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
-        } else {
-            modelImportError = null
-            modelZipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
-        }
-    }
+    val postNotificationsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* no-op: status is checked on recomposition */ }
 
     if (!onboardingCompleted) {
+        LaunchedEffect(Unit) {
+            val installedFromAssets = pipeline.installBundledModelIfPresent()
+            if (installedFromAssets) {
+                repo.refreshModelStatus()
+            }
+        }
+
         OnboardingFlowScreen(
             modelStatus = modelStatus,
             isImportingModel = isImportingModel,
             modelImportError = modelImportError,
-            onSelectModelZip = { launchModelZipPicker() },
+            onSelectModelZip = {
+                if (needsLegacyStoragePermission() && !isLegacyStoragePermissionGranted(context)) {
+                    legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+                } else {
+                    modelImportError = null
+                    modelZipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                }
+            },
             onFinished = {
                 onboardingPrefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, true).apply()
                 onboardingCompleted = true
@@ -194,13 +203,13 @@ private fun MainApp() {
         return
     }
 
-    val postNotificationsPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { /* no-op: status is checked on recomposition */ }
-
     LaunchedEffect(Unit) {
-        settingsViewModel.refreshModelStatus()
         settingsViewModel.processOnAppOpenIfNeeded()
+
+        val installedFromAssets = pipeline.installBundledModelIfPresent()
+        if (installedFromAssets) {
+            repo.refreshModelStatus()
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !isPostNotificationsGranted(context)) {
             postNotificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -340,7 +349,12 @@ private fun MainApp() {
                 TextButton(
                     enabled = !isImportingModel,
                     onClick = {
-                        launchModelZipPicker()
+                        if (needsLegacyStoragePermission() && !isLegacyStoragePermissionGranted(context)) {
+                            legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+                        } else {
+                            modelImportError = null
+                            modelZipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                        }
                     }
                 ) {
                     Text(if (isImportingModel) "Installing..." else "Select ZIP")

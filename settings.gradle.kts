@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Neme Budget"
 include(":app")
+include(":model_weights")

@@ -8,6 +8,7 @@
 > 4) [ ] Replace indeterminate processing spinner with per-notification determinate progress bar.
 > 5) [ ] Tune batch throughput (start with size 10) and verify transaction history/count updates correctly.
 > 6) [ ] Reintroduce `isAiParsed` UI indicator later as a subtle star marker (not in the cramped action row).
+> 7) [ ] Add configurable budget period (month vs week) in settings and propagate period selection through budget aggregation queries/calculations.
 
 > **New Follow-Up Queue (Added 2026-04-01):**
 > 1) [ ] **Dashboard month swipe navigation**
