@@ -180,7 +180,7 @@ private fun MainApp() {
                     legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
                 } else {
                     modelImportError = null
-                    modelZipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                    modelZipPickerLauncher.launch(arrayOf("application/octet-stream"))
                 }
             },
             onFinished = {
@@ -344,7 +344,7 @@ private fun MainApp() {
                         }
                     }
                 ) {
-                    Text(if (isImportingModel) "Installing..." else "Select ZIP")
+                    Text(if (isImportingModel) "Installing..." else "Select File")
                 }
             },
             dismissButton = {

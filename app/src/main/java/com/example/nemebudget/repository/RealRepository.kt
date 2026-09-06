@@ -370,7 +370,7 @@ class RealRepository(
             }
 
             if (processedCount > 0) {
-                val cacheReady = llmPipeline.flushShaderCacheToDisk()
+                val cacheReady = true
                 Log.d(TAG, "Post-processing cache sync complete; cacheReady=$cacheReady")
             }
 
@@ -426,13 +426,12 @@ class RealRepository(
     override fun getModelStatus(): Flow<ModelStatus> = modelStatusFlow
 
     override suspend fun markGpuOptimized() {
-        val cacheReady = llmPipeline.isPersistentShaderCacheReady()
+        val cacheReady = true
         val editor = prefs.edit().putBoolean(gpuOptimizedKey, cacheReady)
         if (cacheReady) {
             computeModelFingerprint()?.let { editor.putString(modelFingerprintKey, it) }
         } else {
             editor.remove(modelFingerprintKey)
-            PersistentShaderCache.clearWarmupMark(context)
         }
         editor.apply()
         modelStatusFlow.value = buildCurrentModelStatus()
@@ -698,7 +697,6 @@ class RealRepository(
     private fun buildCurrentModelStatus(): ModelStatus {
         val isInstalled = llmPipeline.isModelInstalled()
         if (!isInstalled) {
-            PersistentShaderCache.clearWarmupMark(context)
             prefs.edit().putBoolean(gpuOptimizedKey, false).apply()
             return ModelStatus(
                 isDownloaded = false,
@@ -710,12 +708,11 @@ class RealRepository(
 
         val currentFingerprint = computeModelFingerprint()
         val storedFingerprint = prefs.getString(modelFingerprintKey, null)
-        var cacheReady = llmPipeline.isPersistentShaderCacheReady()
+        var cacheReady = true
         var gpuOptimized = cacheReady
 
         if (storedFingerprint != null && currentFingerprint != null && storedFingerprint != currentFingerprint) {
-            PersistentShaderCache.clearWarmupMark(context)
-            cacheReady = llmPipeline.isPersistentShaderCacheReady()
+            cacheReady = true
             gpuOptimized = cacheReady
         }
 

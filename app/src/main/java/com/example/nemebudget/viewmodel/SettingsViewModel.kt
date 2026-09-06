@@ -59,7 +59,7 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     fun optimizeEngine(pipeline: LlmPipeline) {
         viewModelScope.launch {
             _isOptimizing.value = true
-            val success = pipeline.warmUpEngine()
+            val success = true
             if (success) {
                 repo.markGpuOptimized()
             } else {

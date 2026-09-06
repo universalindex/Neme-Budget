@@ -93,12 +93,26 @@ class LlmPipeline(private val context: Context) {
             if (!hasEnoughAvailableMemory(requiredBytes)) {
                 throw IllegalStateException("Not enough available memory to load the model. Try closing other apps.")
             }
-            val newEngine = Engine(EngineConfig(modelPath = modelPath, backend = Backend.GPU(), cacheDir = context.cacheDir.path))
+            val newEngine = Engine(EngineConfig(modelPath = modelPath, backend = Backend.GPU(), cacheDir = context.cacheDir.path)) //This is cached in the app data, wiping it resets this
             newEngine.initialize()
             sharedEngine = newEngine
             return newEngine
         }
     }
+    private fun hasEnoughAvailableMemory(requiredBytes: Long): Boolean {
+        val memInfo = memoryInfo()
+    // lowMemory is the OS's actual verdict — it accounts for reclaimable
+    // cached processes that availMem ignores. Use it as the real gate.
+    if (memInfo.lowMemory) return false
+
+    // Keep availMem as a loose sanity check only, with headroom for the
+    // fact that Android will reclaim cache under pressure — don't require
+    // the full file size to already be "free."
+    val safetyMargin = 0.25 // require model to fit within 4x available, generously
+    return memInfo.availMem > requiredBytes * safetyMargin
+
+    }
+
 
     private fun allowedCategories(): List<String> = loadCategoryCatalog().map { it.label }
 
@@ -161,20 +175,18 @@ private val transactionTool = TransactionToolSet()
     /**
      * Handles the full flow of generating, verifying, and retrying if the LLM hallucinated.
      */
-    fun installModelFromUri(uri: Uri): Boolean {
+    suspend fun installModelFromUri(uri: Uri): Boolean = withContext(Dispatchers.IO) {
         val targetFile = File(modelPath)
-        return try {
+        try {
             targetFile.parentFile?.mkdirs()
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(targetFile).use { output -> input.copyTo(output) }
-
             }
             targetFile.isFile && targetFile.length() > 0
+        } catch (_: Exception) {
+            false
         }
-        catch (_: Exception) {
-        false
     }
-}
     suspend fun getBestLlmDevice(): String = withContext(Dispatchers.IO) {
         // Try NPU first
         if (canLoadNativeLib("Placeholder")) {
@@ -194,11 +206,16 @@ private val transactionTool = TransactionToolSet()
             false
         }
     }
-    private fun hasEnoughAvailableMemory(requiredBytes: Long): Boolean {
+
+    private fun Long.toMb(): String = String.format(Locale.US, "%.1f", this / (1024.0 * 1024.0))
+
+
+
+    private fun memoryInfo(): ActivityManager.MemoryInfo {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val memoryInfo = ActivityManager.MemoryInfo()
-        activityManager.getMemoryInfo(memoryInfo)
-        return memoryInfo.availMem > requiredBytes
+        val info = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(info)
+        return info
     }
 
     suspend fun extractWithRetry(rawNotification: String, maxAttempts: Int = 3): ExtractionResult = withContext(Dispatchers.IO) {
