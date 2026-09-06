@@ -1,12 +1,6 @@
 package com.example.nemebudget.llm
-
-import ai.mlc.mlcllm.MLCEngine
-import ai.mlc.mlcllm.OpenAIProtocol
 import android.content.Context
-import android.net.Uri
-import android.os.Environment
 import android.util.Log
-import com.example.nemebudget.PersistentShaderCache
 import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.RuleAction
@@ -16,16 +10,33 @@ import com.example.nemebudget.model.toDefinition
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import android.net.Uri
+import android.app.ActivityManager
 import java.io.FileOutputStream
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.channels.consumeEach
-
+import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Engine
+import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
+import com.google.ai.edge.litertlm.Tool
+import com.google.ai.edge.litertlm.ToolParam
+import com.google.ai.edge.litertlm.tool
+import com.google.ai.edge.litertlm.ToolSet
 /**
  * Data class representing the strict JSON structure we force the LLM to output.
  */
+
+
+
+
+
 data class ExtractedTransaction(
     val merchant: String,
     val amount: Double,
@@ -34,6 +45,7 @@ data class ExtractedTransaction(
     val verificationNotes: String
 )
 
+
 data class ExtractionResult(
     val rawJson: String,
     val transaction: ExtractedTransaction,
@@ -41,21 +53,52 @@ data class ExtractionResult(
 )
 
 class LlmPipeline(private val context: Context) {
+    class TransactionToolSet : ToolSet {
+        var lastResult: ExtractedTransaction? = null
 
-    private companion object {
-        const val MODEL_FOLDER_NAME = "Qwen3-0.6B-q4f16_1-MLC"
-        const val WARMUP_NOTIFICATION_SAMPLE = "Card Guard Credit Card *3320 $9.13 at SQ *KIWI LOCO FROZEN Y. Tap for details."
+        @Tool(description = "Records the extracted transaction")
+        fun recordTransaction(
+            @ToolParam(description = "Merchant name — the place money was spent") merchant: String,
+            @ToolParam(description = "Transaction amount") amount: Double,
+            @ToolParam(description = "Category — must exactly match one of the allowed category names given in the prompt") category: String
+        ): String {
+            lastResult = ExtractedTransaction(merchant, amount, category, isVerified = false, verificationNotes = "")
+            return "recorded"
+        }
+    }
+    init {
+        @OptIn(ExperimentalApi::class)
+        ExperimentalFlags.enableSpeculativeDecoding = true //This line should be working right?
+    }
+    private val modelPath: String
+        get() = File(context.filesDir, "model.litertlm").absolutePath
+    companion object {
         private val engineLock = Any()
-        private var sharedEngine: MLCEngine? = null
+        private var sharedEngine: Engine? = null
+        fun shutdown() {
+            synchronized(engineLock) {
+                sharedEngine?.close()
+                sharedEngine = null
+            }
+        }
     }
 
-    private val modelPath: String
-        get() = File(context.filesDir, MODEL_FOLDER_NAME).absolutePath
-
-    private val shaderCacheDir: File
-        get() = PersistentShaderCache.cacheDir(context)
-
-    private val modelLib = "qwen3_q4f16_1"
+    private fun engine(): Engine {
+        synchronized(engineLock) {
+            sharedEngine?.let { return it }
+            if (!isModelInstalled()) {
+                throw IllegalStateException("Missing model file at $modelPath")
+            }
+            val requiredBytes = File(modelPath).length()
+            if (!hasEnoughAvailableMemory(requiredBytes)) {
+                throw IllegalStateException("Not enough available memory to load the model. Try closing other apps.")
+            }
+            val newEngine = Engine(EngineConfig(modelPath = modelPath, backend = Backend.GPU(), cacheDir = context.cacheDir.path))
+            newEngine.initialize()
+            sharedEngine = newEngine
+            return newEngine
+        }
+    }
 
     private fun allowedCategories(): List<String> = loadCategoryCatalog().map { it.label }
 
@@ -73,26 +116,10 @@ class LlmPipeline(private val context: Context) {
         }
     }
 
-    private fun jsonSchema(): String {
-        val categories = allowedCategories()
-        return """
-        {
-          "type": "object",
-          "properties": {
-            "merchant": {"type": "string"},
-            "amount": {"type": "number"},
-             "category": {
-               "type": "string",
-               "enum": [${categories.joinToString(", ") { "\"$it\"" }}]
-             }
-           },
-          "required": ["merchant", "amount", "category"]
-        }
-        """.trimIndent()
-    }
 
     private val systemPrompt = """
-Extract the transaction from the notification.
+Extract the transaction from the notification using the transaction extractor tool.
+You MUST USE THIS TOOL. DO NOTHING ELSE
 Rules:
     Merchant: Prioritize store/payee names. Exclude card/reference numbers.
     Amount: Use the transaction value. Ignore balances or limits.
@@ -103,271 +130,77 @@ Notification: America First Alert: Card Guard Credit Card *3320 $9.13 at SQ *Kiw
 Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
 """.trimIndent()
 
-    init {
-        // Ensure the TVM env var is present before any potential engine creation path.
-        PersistentShaderCache.initialize(context.applicationContext)
-    }
 
-    fun isModelInstalled(): Boolean {
-        return ModelArchiveInstaller.isModelReady(File(modelPath))
-    }
 
-    fun isPersistentShaderCacheReady(): Boolean {
-        return PersistentShaderCache.isReady(context, computeModelFingerprint())
-    }
 
-    fun getPersistentShaderCacheDir(): File = shaderCacheDir
-
-    suspend fun installModelFromZipUri(zipUri: Uri): Boolean = withContext(Dispatchers.IO) {
-        val input = runCatching { context.contentResolver.openInputStream(zipUri) }.getOrNull() ?: return@withContext false
-        input.use { stream ->
-            ModelArchiveInstaller.installFromZipStream(
-                zipStream = stream,
-                targetDir = File(modelPath),
-                modelName = MODEL_FOLDER_NAME
-            )
-        }
-    }
-
-    suspend fun installBundledModelIfPresent(): Boolean = withContext(Dispatchers.IO) {
-        val modelDir = File(modelPath)
-        if (ModelArchiveInstaller.isModelReady(modelDir)) return@withContext true
-        installModelFromBundledAssets(modelDir)
-    }
-
-    private fun ensureModelAvailable(): Boolean {
-        val modelDir = File(modelPath)
-        if (isModelInstalled()) {
-            return true
-        }
-
-        if (installModelFromBundledAssets(modelDir)) {
-            Log.d("LlmPipeline", "Model folder missing; installed from bundled assets.")
-            return true
-        }
-
-        val downloadRoots = buildList {
-            runCatching { Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS) }
-                .getOrNull()
-                ?.let { add(it) }
-            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let { add(it) }
-        }
-
-        for (downloadsRoot in downloadRoots) {
-            val matchingZip = ModelArchiveInstaller.findMatchingZip(downloadsRoot, MODEL_FOLDER_NAME)
-            if (matchingZip != null) {
-                Log.d("LlmPipeline", "Model folder missing; installing from ZIP at '${matchingZip.absolutePath}'")
-                return ModelArchiveInstaller.installFromZip(matchingZip, modelDir, MODEL_FOLDER_NAME)
-            }
-        }
-
-        Log.w("LlmPipeline", "Model folder missing and no matching ZIP archive was found in Downloads.")
-        return false
-    }
-
-    private fun installModelFromBundledAssets(targetDir: File): Boolean {
-        val assetRoot = findBundledModelAssetRoot() ?: return false
-        val stagingDir = File(targetDir.parentFile ?: return false, "${targetDir.name}.asset_staging")
-        stagingDir.deleteRecursively()
-        if (!stagingDir.mkdirs() && !stagingDir.isDirectory) return false
-
+    private fun installModelFromBundledAssets(targetFile: File): Boolean {
+        val assetName = context.assets.list("")?.firstOrNull { it.endsWith(".litertlm") } ?: return false
         return try {
-            copyAssetDirectory(assetRoot, stagingDir)
-            if (!ModelArchiveInstaller.isModelReady(stagingDir)) return false
-
-            if (targetDir.exists()) targetDir.deleteRecursively()
-            if (!stagingDir.renameTo(targetDir)) {
-                if (!targetDir.mkdirs() && !targetDir.isDirectory) return false
-                stagingDir.copyRecursively(targetDir, overwrite = true)
-                stagingDir.deleteRecursively()
+            targetFile.parentFile?.mkdirs()
+            context.assets.open(assetName).use { input ->
+                FileOutputStream(targetFile).use { output -> input.copyTo(output) }
             }
-            ModelArchiveInstaller.isModelReady(targetDir)
+            targetFile.isFile && targetFile.length() > 0
         } catch (_: Exception) {
             false
-        } finally {
-            if (stagingDir.exists()) stagingDir.deleteRecursively()
         }
     }
-
-    private fun findBundledModelAssetRoot(): String? {
-        val roots = buildList {
-            add(MODEL_FOLDER_NAME)
-            context.assets.list("")?.forEach { topLevel ->
-                if (topLevel.lowercase(Locale.ROOT).contains("qwen")) {
-                    add(topLevel)
-                }
-            }
-        }.distinct()
-
-        for (root in roots) {
-            findAssetDirectoryContainingSentinel(root)?.let { return it }
-        }
-        return null
+    fun isModelInstalled(): Boolean {
+        val modelFile = File(modelPath)
+        return modelFile.isFile && modelFile.length() > 0
     }
-
-    private fun findAssetDirectoryContainingSentinel(path: String): String? {
-        if (assetFileExists("$path/mlc-chat-config.json")) return path
-
-        val children = runCatching { context.assets.list(path).orEmpty() }.getOrDefault(emptyArray())
-        for (child in children) {
-            val nested = "$path/$child"
-            if (!assetSeemsDirectory(nested)) continue
-            findAssetDirectoryContainingSentinel(nested)?.let { return it }
-        }
-        return null
-    }
-
-    private fun assetSeemsDirectory(path: String): Boolean {
-        val children = runCatching { context.assets.list(path).orEmpty() }.getOrDefault(emptyArray())
-        return children.isNotEmpty()
-    }
-
-    private fun assetFileExists(path: String): Boolean {
-        return runCatching {
-            context.assets.open(path).use { true }
-        }.getOrDefault(false)
-    }
-
-    private fun copyAssetDirectory(assetPath: String, destination: File) {
-        val children = runCatching { context.assets.list(assetPath).orEmpty() }.getOrDefault(emptyArray())
-        if (children.isEmpty()) {
-            destination.parentFile?.mkdirs()
-            context.assets.open(assetPath).use { input ->
-                FileOutputStream(destination).use { output -> input.copyTo(output) }
-            }
-            return
-        }
-
-        if (!destination.exists()) destination.mkdirs()
-        for (child in children) {
-            copyAssetDirectory("$assetPath/$child", File(destination, child))
-        }
-    }
-
-    private fun loadEngine(): MLCEngine {
-        synchronized(engineLock) {
-            sharedEngine?.let {
-                Log.d("LlmPipeline", "MLC Engine already loaded.")
-                return it
-            }
-        }
-
-        if (!ensureModelAvailable()) {
-            throw IllegalStateException("Missing MLC model files for '$MODEL_FOLDER_NAME' and no installable ZIP archive was found.")
-        }
-
-        // Re-apply env var right before first native init to cover service/UI entry ordering.
-        PersistentShaderCache.initialize(context.applicationContext)
-        
-        Log.d("LlmPipeline", "WAKING UP ENGINE: Attempting to load Qwen with lib '${modelLib}' from path '${modelPath}'")
-        try {
-            val engine = MLCEngine()
-            engine.reload(modelPath, modelLib)
-            synchronized(engineLock) {
-                sharedEngine = engine
-            }
-            Log.d("LlmPipeline", "MLC Engine loaded successfully.")
-            return engine
-        } catch (e: Exception) {
-            Log.e("LlmPipeline", "CRITICAL: Failed to load MLC Engine with lib '${modelLib}'", e)
-            synchronized(engineLock) {
-                sharedEngine = null
-            }
-            throw e 
-        }
-    }
-
-    private fun currentEngine(): MLCEngine? = synchronized(engineLock) { sharedEngine }
-
-    fun unloadEngine() {
-        synchronized(engineLock) {
-            sharedEngine?.unload()
-            sharedEngine = null
-        }
-        Log.d("LlmPipeline", "MLC Engine unloaded from RAM.")
-    }
-
-    /**
-     * Warms up the engine to force shader compilation, then unloads it so the cache can flush to disk.
-     */
-    suspend fun warmUpEngine(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cacheReadyBefore = PersistentShaderCache.hasCacheArtifacts(context)
-            Log.d(
-                "LlmPipeline",
-                "Warmup preflight: cacheReadyBefore=$cacheReadyBefore dir='${shaderCacheDir.absolutePath}'"
-            )
-
-            if (cacheReadyBefore) {
-                Log.d("LlmPipeline", "Shader cache already exists on disk; skipping compilation pass.")
-                computeModelFingerprint()?.let { PersistentShaderCache.markWarmupComplete(context, it) }
-                return@withContext true
-            }
-
-            val engine = currentEngine() ?: loadEngine()
-            Log.d("LlmPipeline", "Shader cache missing; starting warmup-and-kill compilation sequence...")
-
-            val messages = listOf(
-                OpenAIProtocol.ChatCompletionMessage(
-                    role = OpenAIProtocol.ChatCompletionRole.user,
-                    content = "Reply with exactly one word: ok."
-                )
-            )
-            val startTime = System.currentTimeMillis()
-            var streamedChars = 0
-
-            try {
-                val channel = engine.chat.completions.create(
-                    messages = messages,
-                    response_format = OpenAIProtocol.ResponseFormat(
-                        type = "json_object",
-                        schema = jsonSchema()
-                    ),
-                    max_tokens = 1
-                )
-
-                channel?.consumeEach { response ->
-                    streamedChars += response.choices.firstOrNull()?.delta?.content?.text?.length ?: 0
-                }
-            } finally {
-                unloadEngine()
-                PersistentShaderCache.syncToDisk()
-            }
-
-            val cacheReadyAfter = PersistentShaderCache.hasCacheArtifacts(context)
-            if (cacheReadyAfter) {
-                computeModelFingerprint()?.let { PersistentShaderCache.markWarmupComplete(context, it) }
-            }
-
-            val elapsed = System.currentTimeMillis() - startTime
-            Log.d(
-                "LlmPipeline",
-                "Warmup-and-kill finished in ${elapsed}ms (streamedChars=$streamedChars). cacheReadyAfter=$cacheReadyAfter"
-            )
-            cacheReadyAfter
-        } catch (e: Exception) {
-            Log.e("LlmPipeline", "Warmup failed", e)
-            false
-        }
-    }
-
-    /**
-     * Flushes any shader artifacts to disk without unloading the engine.
-     * Useful after real notification processing where we want persistence but keep runtime warm.
-     */
-    suspend fun flushShaderCacheToDisk(): Boolean = withContext(Dispatchers.IO) {
-        PersistentShaderCache.syncToDisk()
-        val cacheReady = PersistentShaderCache.hasCacheArtifacts(context)
-        if (cacheReady) {
-            computeModelFingerprint()?.let { PersistentShaderCache.markWarmupComplete(context, it) }
-        }
-        Log.d("LlmPipeline", "Post-process cache flush complete; cacheReady=$cacheReady")
-        cacheReady
-    }
-
+private val transactionTool = TransactionToolSet()
+  //This stuff is new and right but for the prompt stuff I'm not worrei
+    val conversationConfig = ConversationConfig(
+        systemInstruction = Contents.of(systemPrompt),
+        initialMessages = listOf(
+        ),
+        tools = listOf(tool(transactionTool)), //Also not sure why this is bad
+        samplerConfig = SamplerConfig(topK = 10, topP = 0.95, temperature = 0.8),
+    )
     /**
      * Handles the full flow of generating, verifying, and retrying if the LLM hallucinated.
      */
+    fun installModelFromUri(uri: Uri): Boolean {
+        val targetFile = File(modelPath)
+        return try {
+            targetFile.parentFile?.mkdirs()
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(targetFile).use { output -> input.copyTo(output) }
+
+            }
+            targetFile.isFile && targetFile.length() > 0
+        }
+        catch (_: Exception) {
+        false
+    }
+}
+    suspend fun getBestLlmDevice(): String = withContext(Dispatchers.IO) {
+        // Try NPU first
+        if (canLoadNativeLib("Placeholder")) {
+            return@withContext "NPU"  //Todo NPU integration Figure out how to get AOT bianaries up for common phones
+        }
+        if (canLoadNativeLib("vndksupport")) {
+            return@withContext "GPU"
+        }
+        else
+            return@withContext "CPU"
+    }
+    private fun canLoadNativeLib(libName: String): Boolean {
+        return try {
+            System.loadLibrary(libName)
+            true
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+    private fun hasEnoughAvailableMemory(requiredBytes: Long): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memoryInfo = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(memoryInfo)
+        return memoryInfo.availMem > requiredBytes
+    }
+
     suspend fun extractWithRetry(rawNotification: String, maxAttempts: Int = 3): ExtractionResult = withContext(Dispatchers.IO) {
         var currentPrompt = buildInitialPrompt(rawNotification)
         var lastJson = """{"merchant":"Error","amount":0.0,"category":"Other"}"""
@@ -398,57 +231,18 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
     /**
      * The core LLM generation call.
      */
-    private suspend fun generateJson(userPrompt: String): String {
-
-        var llmJsonString = """{"merchant": "Error", "amount": 0.0, "category": "Other"}"""
-        try {
-            val engine = currentEngine() ?: loadEngine()
-
-            val messages = listOf(
-                OpenAIProtocol.ChatCompletionMessage(
-                    role = OpenAIProtocol.ChatCompletionRole.system,
-                    content = systemPrompt
-                ),
-                OpenAIProtocol.ChatCompletionMessage(
-                    role = OpenAIProtocol.ChatCompletionRole.user,
-                    content = userPrompt
-                )
-            )
-
-            val startTime = System.currentTimeMillis()
-
-            val sb = StringBuilder()
-            val channel = engine.chat.completions.create(
-                messages = messages,
-                response_format = OpenAIProtocol.ResponseFormat(
-                    type = "json_object",
-                    schema = jsonSchema()
-                ),
-                max_tokens = 220
-            )
-
-            channel?.consumeEach { response ->
-                val contentObj = response.choices.firstOrNull()?.delta?.content
-                val textToken = contentObj?.text
-                if (textToken != null) {
-                    sb.append(textToken)
-                }
-            }
-
-            val finalOutput = sb.toString().trim()
-            if (finalOutput.isNotEmpty()) {
-                llmJsonString = extractFirstCompleteJsonObject(finalOutput) ?: llmJsonString
-            }
-            
-            // END TIMER
-            val timeTaken = System.currentTimeMillis() - startTime
-            Log.d("LlmPipeline", "SPEED TEST: Generation took ${timeTaken}ms")
-            Log.d("LlmPipeline", "MLC Engine raw output: $llmJsonString")
-
-        } catch (e: Exception) {
-            Log.e("LlmPipeline", "MLC Engine inference failed", e)
+    private suspend fun generateJson(userPrompt: String): String = withContext(Dispatchers.IO) {
+        transactionTool.lastResult = null
+        engine().createConversation(conversationConfig).use { conversation ->
+            conversation.sendMessage(userPrompt)
         }
-        return llmJsonString
+        val result = transactionTool.lastResult
+        if (result != null) {
+            """{"merchant": ${JSONObject.quote(result.merchant)}, "amount": ${result.amount}, "category": ${JSONObject.quote(result.category)}}"""
+        } else {
+            """{"merchant": "Error", "amount": 0.0, "category": "Other"}"""
+        }
+
     }
 
     fun processAndVerify(rawNotification: String, llmJsonString: String): ExtractedTransaction {
@@ -481,6 +275,10 @@ Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
             val rawLower = rawNotification.lowercase(Locale.ROOT)
 
             val merchantForcedByRule = ruleResult.appliedRule?.action == RuleAction.SET_MERCHANT
+            if (candidate.merchant == "Error") {
+                isVerified = false
+                notes = "FAILED: Model did not call the transaction tool."
+            }
             if (!merchantForcedByRule && candidate.merchant != "Unknown" && candidate.merchant != "Error" && !merchantAppearsInRaw(rawLower, candidate.merchant)) {
                 isVerified = false
                 notes += "FAILED: Merchant '${candidate.merchant}' not found in original text."
@@ -716,13 +514,4 @@ Correction rules:
         )
     }
 
-    fun getBestLlmDevice(): String {
-        return if (currentEngine() != null) "MLC Loaded" else "Unknown (Engine not loaded)"
-    }
-
-    private fun computeModelFingerprint(): String? {
-        val sentinel = File(modelPath, "mlc-chat-config.json")
-        if (!sentinel.isFile) return null
-        return "${sentinel.length()}_${sentinel.lastModified()}"
-    }
 }

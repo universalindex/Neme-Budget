@@ -146,7 +146,7 @@ private fun MainApp() {
 
         appScope.launch {
             isImportingModel = true
-            val installed = pipeline.installModelFromZipUri(uri)
+            val installed = pipeline.installModelFromUri(uri)
             isImportingModel = false
 
             if (installed) {
@@ -340,7 +340,7 @@ private fun MainApp() {
                             legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
                         } else {
                             modelImportError = null
-                            modelZipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                            modelZipPickerLauncher.launch(arrayOf("application/octet-stream"))
                         }
                     }
                 ) {

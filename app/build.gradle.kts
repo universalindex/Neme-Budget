@@ -51,6 +51,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.compose.material.icons)
+    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
 
     // 1. The Official Pre-Compiled MLC LLM Engine (Loaded from your local libs folder)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))

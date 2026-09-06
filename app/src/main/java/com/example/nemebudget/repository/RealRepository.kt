@@ -10,7 +10,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import com.example.nemebudget.PersistentShaderCache
 import com.example.nemebudget.db.AppDatabase
 import com.example.nemebudget.db.RawNotification
 import com.example.nemebudget.db.toEntity
@@ -28,9 +27,7 @@ import com.example.nemebudget.model.RuleField
 import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.model.activeCategoryOptions
-import com.example.nemebudget.model.resolveCategoryByLabel
 import com.example.nemebudget.model.resolveActiveCategoryByLabel
-import com.example.nemebudget.model.toDefinition
 import com.example.nemebudget.pipeline.TransactionalNotificationGate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow

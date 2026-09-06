@@ -11,6 +11,7 @@ import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.model.toDefinition
 import kotlinx.coroutines.flow.Flow
 
+
 /**
  * Reads queued encrypted notifications from Room, runs a final transactional gate,
  * and converts verified LLM output into domain transactions.
@@ -77,7 +78,7 @@ class NotificationBatchProcessor(
                 Log.e("BatchProcessor", "Failed to process rawId=${raw.id}: ${t.message}", t)
             }
         }
-
+        LlmPipeline.shutdown()
         return BatchProcessingResult(
             processedRawCount = pending.size - failedCount,
             createdTransactions = createdTransactions,

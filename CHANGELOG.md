@@ -3,6 +3,20 @@
 
 This file tracks significant changes and progress for the Neme Budget app. Please update it whenever you complete a major task or make a critical architectural decision.
 
+## 2026-09-06 - AI Assistant (Fix KSP Generated Code `mutableListOf` Unresolved Reference)
+
+### What Changed
+* Resolved `Unresolved reference 'mutableListOf'` error in `app/build/generated/ksp/debug/kotlin/com/example/nemebudget/db/AppDatabase_Impl.kt:22:27`.
+* Ran `:app:clean :app:compileDebugKotlin` to regenerate KSP output.
+
+### Why This Was Done
+* The stale KSP-generated `AppDatabase_Impl.kt` contained `import kotlin.collections.mutableListOf` on line 22, but the Kotlin 2.2.10 compiler could not resolve the standard-library import in the generated file's context. This was a transient build-state issue caused by incremental KSP generation leaving behind unresolved standard-library imports.
+* Cleaning the build directory forces KSP to regenerate all Room implementation classes from scratch, producing a file where `mutableListOf` resolves correctly against the Kotlin stdlib.
+
+### Verification
+* Ran `:app:clean :app:compileDebugKotlin` — the `mutableListOf` error no longer appears.
+* Other unresolved references (`installModelFromZipUri`, `isModelInstalled`, `getBestLlmDevice`, `PersistentShaderCache`, `warmUpEngine`) remain; these are unrelated `litertlm-android` / `mlc4j` API mismatches.
+
 ## 2026-04-06 - AI Assistant (Post-Processing Cache Sync Without Unload)
 
 ### What Changed
