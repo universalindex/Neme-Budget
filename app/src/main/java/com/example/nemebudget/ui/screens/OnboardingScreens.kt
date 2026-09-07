@@ -223,7 +223,8 @@ fun OnboardingModelScreen(
             ) {
                 Text("Preparing on-device AI", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Select your local Qwen ZIP so Neme can install on-device AI. This only happens once.",
+                    "Select your local model so Nemebudget can install on-device AI. This only happens once, it should be a .literft file some good options include \n " +
+                      " gemma-4-4B-it and gemma 4-2b-it but anything that supports tool calling will work.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 LinearProgressIndicator(
@@ -234,7 +235,7 @@ fun OnboardingModelScreen(
                     if (modelStatus.isDownloaded) {
                         "Model ready (${modelStatus.modelSizeLabel})"
                     } else {
-                        "Waiting for model ZIP (${modelStatus.modelSizeLabel})"
+                        "Waiting for model file (${modelStatus.modelSizeLabel})"
                     },
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -248,7 +249,7 @@ fun OnboardingModelScreen(
                             CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.height(16.dp))
                             Spacer(modifier = Modifier.padding(horizontal = 4.dp))
                         }
-                        Text(if (isImportingModel) "Installing Model..." else "Select Model ZIP")
+                        Text(if (isImportingModel) "Installing Model..." else "Select Model file")
                     }
                 }
                 modelImportError?.takeIf { it.isNotBlank() }?.let { errorText ->

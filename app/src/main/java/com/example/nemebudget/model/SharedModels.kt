@@ -135,7 +135,8 @@ data class AppSettings(
     val budgetLimits: Map<Category, Double> = emptyMap(),
     val categoryPresentation: Map<String, CategoryPresentation> = emptyMap(),
     val customBudgetCategories: List<CustomBudgetCategory> = emptyList(),
-    val hiddenCategoryIds: Set<String> = emptySet()
+    val hiddenCategoryIds: Set<String> = emptySet(),
+    val periodConfig: BudgetPeriodConfig = BudgetPeriodConfig.Monthly
 )
 
 data class RejectedNotification(
@@ -150,7 +151,6 @@ data class ModelStatus(
     val isDownloaded: Boolean,
     val downloadProgress: Float,
     val modelSizeLabel: String,
-    val isGpuOptimized: Boolean = false
 )
 
 sealed interface ProcessingState {

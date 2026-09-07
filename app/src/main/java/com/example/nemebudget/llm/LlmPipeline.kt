@@ -70,7 +70,7 @@ class LlmPipeline(private val context: Context) {
         @OptIn(ExperimentalApi::class)
         ExperimentalFlags.enableSpeculativeDecoding = true //This line should be working right?
     }
-    private val modelPath: String
+    val modelPath: String
         get() = File(context.filesDir, "model.litertlm").absolutePath
     companion object {
         private val engineLock = Any()
@@ -190,7 +190,7 @@ private val transactionTool = TransactionToolSet()
     suspend fun getBestLlmDevice(): String = withContext(Dispatchers.IO) {
         // Try NPU first
         if (canLoadNativeLib("Placeholder")) {
-            return@withContext "NPU"  //Todo NPU integration Figure out how to get AOT bianaries up for common phones
+            return@withContext "NPU"  //Todo NPU integration Figure out how to get AOT bianaries up for common phones Not SUPER important though it's pretty light weight as is
         }
         if (canLoadNativeLib("vndksupport")) {
             return@withContext "GPU"

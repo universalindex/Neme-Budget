@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import com.example.nemebudget.db.AppDatabase
 import com.example.nemebudget.db.RawNotification
 import com.example.nemebudget.db.toEntity
+import com.example.nemebudget.model.BudgetPeriodConfig
 import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.Budget
@@ -39,6 +40,7 @@ import kotlinx.coroutines.yield
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Calendar
 import java.util.Locale
 import org.json.JSONObject
 
@@ -63,7 +65,6 @@ class RealRepository(
 
     private val TAG = "RealRepository"
     private val prefs = context.applicationContext.getSharedPreferences("nemebudget_prefs", Context.MODE_PRIVATE)
-    private val gpuOptimizedKey = "gpu_optimized"
     private val modelFingerprintKey = "model_fingerprint"
     private val settingsKey = "app_settings_json"
     private val modelStatusFlow = kotlinx.coroutines.flow.MutableStateFlow(buildCurrentModelStatus())
@@ -425,18 +426,6 @@ class RealRepository(
 
     override fun getModelStatus(): Flow<ModelStatus> = modelStatusFlow
 
-    override suspend fun markGpuOptimized() {
-        val cacheReady = true
-        val editor = prefs.edit().putBoolean(gpuOptimizedKey, cacheReady)
-        if (cacheReady) {
-            computeModelFingerprint()?.let { editor.putString(modelFingerprintKey, it) }
-        } else {
-            editor.remove(modelFingerprintKey)
-        }
-        editor.apply()
-        modelStatusFlow.value = buildCurrentModelStatus()
-    }
-
     override suspend fun refreshModelStatus() {
         modelStatusFlow.value = buildCurrentModelStatus()
     }
@@ -576,7 +565,19 @@ class RealRepository(
                             hiddenArray.optString(index).takeIf { it.isNotBlank() }?.let { add(normalizeBudgetId(it)) }
                         }
                     }
-                } ?: emptySet()
+                } ?: emptySet(),
+                // in loadAppSettingsFromPrefs(), inside the AppSettings(...) constructor call:
+                periodConfig = root.optJSONObject("periodConfig")?.let { pc ->
+                    when (pc.optString("type")) {
+                        "WEEKLY" -> BudgetPeriodConfig.Weekly(pc.optInt("startDayOfWeek", Calendar.SUNDAY))
+                        "BIWEEKLY" -> BudgetPeriodConfig.Biweekly(
+                            startDayOfWeek = pc.optInt("startDayOfWeek", Calendar.SUNDAY),
+                            anchorMillis = pc.optLong("anchorMillis", System.currentTimeMillis())
+                        )
+                        "SEMI_MONTHLY" -> BudgetPeriodConfig.SemiMonthly
+                        else -> BudgetPeriodConfig.Monthly
+                    }
+                } ?: BudgetPeriodConfig.Monthly
             )
         } catch (t: Throwable) {
             Log.w(TAG, "Failed to read saved settings, using defaults", t)
@@ -697,28 +698,19 @@ class RealRepository(
     private fun buildCurrentModelStatus(): ModelStatus {
         val isInstalled = llmPipeline.isModelInstalled()
         if (!isInstalled) {
-            prefs.edit().putBoolean(gpuOptimizedKey, false).apply()
             return ModelStatus(
                 isDownloaded = false,
                 downloadProgress = 0f,
-                modelSizeLabel = "0.6 GB",
-                isGpuOptimized = false
+                modelSizeLabel = "No model installed",
             )
         }
 
-        val currentFingerprint = computeModelFingerprint()
-        val storedFingerprint = prefs.getString(modelFingerprintKey, null)
-        var cacheReady = true
-        var gpuOptimized = cacheReady
+        val currentFingerprint = getModelSize()
 
-        if (storedFingerprint != null && currentFingerprint != null && storedFingerprint != currentFingerprint) {
-            cacheReady = true
-            gpuOptimized = cacheReady
-        }
+
 
         prefs.edit().apply {
-            putBoolean(gpuOptimizedKey, gpuOptimized)
-            if (currentFingerprint != null) {
+            if (currentFingerprint != "No File found") {
                 putString(modelFingerprintKey, currentFingerprint)
             } else {
                 remove(modelFingerprintKey)
@@ -728,16 +720,13 @@ class RealRepository(
         return ModelStatus(
             isDownloaded = true,
             downloadProgress = 1f,
-            modelSizeLabel = "0.6 GB",
-            isGpuOptimized = gpuOptimized
+            modelSizeLabel =  getModelSize(),
         )
     }
-
-    private fun computeModelFingerprint(): String? {
-        val modelDir = File(context.filesDir, "Qwen3-0.6B-q4f16_1-MLC")
-        val sentinel = File(modelDir, "mlc-chat-config.json")
-        if (!sentinel.isFile) return null
-        return "${sentinel.length()}_${sentinel.lastModified()}"
+    private fun getModelSize(): String {
+        val file = File(llmPipeline.modelPath)
+        if (!file.isFile) return "No File found"
+        return "${"%.1f".format(File(llmPipeline.modelPath).length() / (1024.0 * 1024.0))} GB"
     }
 }
 

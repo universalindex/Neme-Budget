@@ -11,65 +11,40 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import com.example.nemebudget.model.AppSettings
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-
-data class MonthSelection(val year: Int, val monthZeroBased: Int) {
-    fun label(): String {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, monthZeroBased)
-            set(Calendar.DAY_OF_MONTH, 1)
-        }
-        return SimpleDateFormat("MMMM yyyy", Locale.US).format(cal.time)
-    }
-
-    fun startMillis(): Long {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, monthZeroBased)
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return cal.timeInMillis
-    }
-
-    fun endMillis(): Long {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, monthZeroBased)
-            set(Calendar.DAY_OF_MONTH, getActualMaximum(Calendar.DAY_OF_MONTH))
-            set(Calendar.HOUR_OF_DAY, 23)
-            set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59)
-            set(Calendar.MILLISECOND, 999)
-        }
-        return cal.timeInMillis
-    }
-}
-
+import com.example.nemebudget.model.previous
+import com.example.nemebudget.model.BudgetPeriod
+import kotlinx.coroutines.flow.combine
+import com.example.nemebudget.model.periodContaining
+import com.example.nemebudget.model.BudgetPeriodConfig
+import com.example.nemebudget.model.next
 class DashboardViewModel(private val repo: AppRepository) : ViewModel() {
-    private val now = Calendar.getInstance()
-    private val _selectedMonth = MutableStateFlow(
-        MonthSelection(
-            year = now.get(Calendar.YEAR),
-            monthZeroBased = now.get(Calendar.MONTH)
-        )
-    )
-    val selectedMonth = _selectedMonth.asStateFlow()
+
+    private val settings: StateFlow<AppSettings> = repo.getSettings()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
+
+    // Tracks "which period, relative to right now" the user has navigated to.
+    // Recomputed whenever periodConfig changes (e.g. user switches Weekly -> Monthly in settings).
+    private val _referenceMillis = MutableStateFlow(System.currentTimeMillis())
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val transactions: StateFlow<List<Transaction>> = _selectedMonth
-        .flatMapLatest { month ->
-            repo.getTransactionsByDateRange(month.startMillis(), month.endMillis())
-        }
+    val currentPeriod: StateFlow<BudgetPeriod> = combine(settings, _referenceMillis) { s, ref ->
+        periodContaining(s.periodConfig, ref)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        periodContaining(BudgetPeriodConfig.Monthly, System.currentTimeMillis())
+    )
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val transactions: StateFlow<List<Transaction>> = currentPeriod
+        .flatMapLatest { period -> repo.getTransactionsByDateRange(period.startMillis, period.endMillis) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val spendingByCategory: StateFlow<Map<CategoryDefinition, Double>> = transactions
@@ -80,24 +55,16 @@ class DashboardViewModel(private val repo: AppRepository) : ViewModel() {
         .map { list -> 2000.0 - list.sumOf { it.amount } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
 
-    fun previousMonth() {
-        _selectedMonth.update {
-            if (it.monthZeroBased == 0) {
-                MonthSelection(it.year - 1, 11)
-            } else {
-                MonthSelection(it.year, it.monthZeroBased - 1)
-            }
-        }
+    fun previousPeriod() {
+        _referenceMillis.value = currentPeriod.value.previous().startMillis
     }
 
-    fun nextMonth() {
-        _selectedMonth.update {
-            if (it.monthZeroBased == 11) {
-                MonthSelection(it.year + 1, 0)
-            } else {
-                MonthSelection(it.year, it.monthZeroBased + 1)
-            }
-        }
+    fun nextPeriod() {
+        _referenceMillis.value = currentPeriod.value.next().startMillis
+    }
+
+    fun jumpToDate(millis: Long) {
+        _referenceMillis.value = millis
     }
 }
 

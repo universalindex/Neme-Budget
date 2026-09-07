@@ -36,8 +36,7 @@ interface AppRepository {
     suspend fun updateRejectedNotification(id: Int, title: String, text: String, reason: String)
     suspend fun deleteRejectedNotification(id: Int)
 
-    fun getModelStatus(): Flow<ModelStatus>
-    suspend fun markGpuOptimized() // Persists the optimization flag once AOT shader compilation completes
+    fun getModelStatus(): Flow<ModelStatus> // Persists the optimization flag once AOT shader compilation completes
     suspend fun refreshModelStatus()
 
     suspend fun getTotalTransactionCount(): Int

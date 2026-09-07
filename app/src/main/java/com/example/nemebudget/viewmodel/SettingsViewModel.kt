@@ -2,7 +2,6 @@ package com.example.nemebudget.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.ModelStatus
 import com.example.nemebudget.model.RuleDefinition
@@ -15,11 +14,14 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.example.nemebudget.model.BudgetPeriodConfig
 import kotlin.math.min
+import com.example.nemebudget.llm.LlmPipeline
+import com.example.nemebudget.repository.RealRepository
 
 class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
-    data class KnownApp(val label: String, val packageName: String)
 
+    data class KnownApp(val label: String, val packageName: String)
     val knownSpamApps: List<KnownApp> = listOf(
         KnownApp("Venmo", "com.venmo"),
         KnownApp("Cash App", "com.squareup.cash"),
@@ -35,9 +37,15 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
         .stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5_000),
-            ModelStatus(isDownloaded = false, downloadProgress = 0f, modelSizeLabel = "Unknown", isGpuOptimized = false)
+            ModelStatus(isDownloaded = false, downloadProgress = 0f, modelSizeLabel = "Unknown")
         )
 
+
+    fun refreshModelStatus() {
+        viewModelScope.launch {
+            repo.refreshModelStatus()
+        }
+    }
     val pendingNotificationCount: StateFlow<Int> = repo.getPendingNotificationCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
@@ -56,18 +64,6 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
         refreshCount()
     }
 
-    fun optimizeEngine(pipeline: LlmPipeline) {
-        viewModelScope.launch {
-            _isOptimizing.value = true
-            val success = true
-            if (success) {
-                repo.markGpuOptimized()
-            } else {
-                repo.refreshModelStatus()
-            }
-            _isOptimizing.value = false
-        }
-    }
 
     fun updatePrimaryBank(bank: String) {
         val updated = settings.value.copy(primaryBank = bank)
@@ -77,7 +73,12 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
             repo.saveSettings(updated)
         }
     }
-
+    fun updatePeriodConfig(config: BudgetPeriodConfig) {
+        val updated = settings.value.copy(periodConfig = config)
+        viewModelScope.launch {
+            repo.saveSettings(updated)
+        }
+    }
     fun toggleIgnoredApp(packageName: String) {
         val current = settings.value
         val updated = if (packageName in current.ignoredApps) {

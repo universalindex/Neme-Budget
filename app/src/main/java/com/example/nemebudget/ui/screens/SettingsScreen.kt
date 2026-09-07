@@ -8,6 +8,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
+import android.app.DatePickerDialog
+import com.example.nemebudget.model.BudgetPeriodConfig
+import androidx.compose.runtime.rememberCoroutineScope
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -29,6 +33,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.InputChip
+import kotlinx.coroutines.launch
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -42,7 +47,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +55,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.example.nemebudget.BuildConfig
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
@@ -63,13 +68,48 @@ import com.example.nemebudget.model.ProcessingState
 import com.example.nemebudget.viewmodel.SettingsViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Calendar
+import androidx.compose.material3.RadioButton
 import java.util.Locale
-
+import androidx.compose.material3.FilterChip
 private data class DeviceAppItem(
     val label: String,
     val packageName: String
 )
+@Composable
+private fun PeriodTypeRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Text(label)
+    }
+}
 
+@Composable
+private fun DayOfWeekChipRow(selectedDay: Int, onDaySelected: (Int) -> Unit) {
+    // Calendar.SUNDAY == 1, ..., Calendar.SATURDAY == 7
+    val days = listOf(
+        Calendar.SUNDAY to "S", Calendar.MONDAY to "M", Calendar.TUESDAY to "T",
+        Calendar.WEDNESDAY to "W", Calendar.THURSDAY to "T", Calendar.FRIDAY to "F",
+        Calendar.SATURDAY to "S"
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 40.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        days.forEach { (dayValue, letter) ->
+            FilterChip(
+                selected = dayValue == selectedDay,
+                onClick = { onDaySelected(dayValue) },
+                label = { Text(letter) }
+            )
+        }
+    }
+}
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLab: () -> Unit, onOpenManageRules: () -> Unit) {
     val context = LocalContext.current
@@ -78,6 +118,19 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
     ) { granted ->
         if (!granted) {
             Toast.makeText(context, "Notification permission is required for test alerts.", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val scope = rememberCoroutineScope()
+    val modelFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            scope.launch {
+                val success = pipeline.installModelFromUri(it)
+                if (success) {
+                    viewModel.refreshModelStatus() // however your ViewModel exposes this
+                }
+            }
         }
     }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -113,8 +166,8 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
         item {
             Text("Settings", style = MaterialTheme.typography.headlineSmall)
         }
-
-        item {
+        if (!listenerEnabled || !postNotificationsGranted)
+            item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(
                     modifier = Modifier.padding(12.dp),
@@ -150,7 +203,61 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                 }
             }
         }
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Budget Period", style = MaterialTheme.typography.titleMedium)
 
+                    PeriodTypeRow(
+                        label = "Monthly",
+                        selected = settings.periodConfig is BudgetPeriodConfig.Monthly,
+                        onClick = { viewModel.updatePeriodConfig(BudgetPeriodConfig.Monthly) }
+                    )
+                    PeriodTypeRow(
+                        label = "1st & 15th",
+                        selected = settings.periodConfig is BudgetPeriodConfig.SemiMonthly,
+                        onClick = { viewModel.updatePeriodConfig(BudgetPeriodConfig.SemiMonthly) }
+                    )
+                    PeriodTypeRow(
+                        label = "Weekly",
+                        selected = settings.periodConfig is BudgetPeriodConfig.Weekly,
+                        onClick = {
+                            // Default to Sunday the first time Weekly is picked.
+                            viewModel.updatePeriodConfig(BudgetPeriodConfig.Weekly(Calendar.SUNDAY))
+                        }
+                    )
+                    if (settings.periodConfig is BudgetPeriodConfig.Weekly) {
+                        val current = settings.periodConfig as BudgetPeriodConfig.Weekly
+                        DayOfWeekChipRow(
+                            selectedDay = current.startDayOfWeek,
+                            onDaySelected = { day -> viewModel.updatePeriodConfig(BudgetPeriodConfig.Weekly(day)) }
+                        )
+                    }
+
+                    PeriodTypeRow(
+                        label = "Biweekly",
+                        selected = settings.periodConfig is BudgetPeriodConfig.Biweekly,
+                        onClick = {
+                            // Default anchor to today the first time Biweekly is picked.
+                            viewModel.updatePeriodConfig(BudgetPeriodConfig.Biweekly(System.currentTimeMillis()))
+                        }
+                    )
+                    if (settings.periodConfig is BudgetPeriodConfig.Biweekly) {
+                        val current = settings.periodConfig as BudgetPeriodConfig.Biweekly
+                        AnchorDateButton(
+                            anchorMillis = current.anchorMillis,
+                            onAnchorPicked = { millis -> viewModel.updatePeriodConfig(BudgetPeriodConfig.Biweekly(millis)) }
+                        )
+                    }
+                }
+            }
+        }
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -219,29 +326,15 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Qwen Model Status", style = MaterialTheme.typography.titleMedium)
+                    Text("Model Status", style = MaterialTheme.typography.titleMedium)
                     if (!modelStatus.isDownloaded) {
-                        Text("Downloading Qwen AI (one-time, ${modelStatus.modelSizeLabel})")
+                        Text("Downloading (one-time, ${modelStatus.modelSizeLabel})")
                         LinearProgressIndicator(
                             progress = { modelStatus.downloadProgress },
                             modifier = Modifier.fillMaxWidth()
                         )
-                    } else if (!modelStatus.isGpuOptimized) {
-                        Text("Model is ready, but its persistent shader cache has not been built for this device yet. This happens once and takes ~1 minute.")
-                        Button(
-                            onClick = { viewModel.optimizeEngine(pipeline) },
-                            enabled = !isOptimizing,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            if (isOptimizing) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.size(8.dp))
-                            }
-                            Text(if (isOptimizing) "Compiling Shaders..." else "Warm Cache Now")
-                        }
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(
@@ -249,13 +342,13 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                                 contentDescription = "Model ready",
                                 tint = MaterialTheme.colorScheme.primary
                             )
-                            Text("Qwen 3 0.6B - Ready - persistent shader cache saved on device (${modelStatus.modelSizeLabel})")
+                            Text("Model Ready")
                         }
                     }
                 }
             }
         }
-
+        if (BuildConfig.DEBUG) {
         item { HorizontalDivider() }
 
         item {
@@ -305,13 +398,22 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
             ) {
                 Text("Post Test Notification")
             }
-        }
-
+        }}
         item { HorizontalDivider() }
 
         item {
             Text("Transactions stored locally: $totalCount")
             Text("Queued notifications: $pendingCount")
+        }
+        item {
+            val isRunning = processingState is ProcessingState.Processing
+            val buttonLabel = when (val state = processingState) {
+                is ProcessingState.Processing -> "Processing ${state.processedCount}/${state.totalCount}"
+                else -> "Process Now"
+            }
+            Button(onClick = viewModel::processNow, enabled = !isRunning, modifier = Modifier.fillMaxWidth()) {
+                Text(buttonLabel)
+            }
         }
 
         item {
@@ -325,17 +427,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                 }
             }) {
                 Text("Export to CSV")
-            }
-        }
-
-        item {
-            val isRunning = processingState is ProcessingState.Processing
-            val buttonLabel = when (val state = processingState) {
-                is ProcessingState.Processing -> "Processing ${state.processedCount}/${state.totalCount}"
-                else -> "Process Now"
-            }
-            Button(onClick = viewModel::processNow, enabled = !isRunning) {
-                Text(buttonLabel)
             }
         }
 
@@ -374,22 +465,22 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                 ProcessingState.Idle -> Unit
             }
         }
-
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onOpenLab) { Text("Open LLM Lab") }
-                Button(
-                    onClick = { showWipeDialog = true },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError
-                    )
-                ) {
-                    Text("Wipe All Data")
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (BuildConfig.DEBUG){Button(onClick = onOpenLab) { Text("Open LLM Lab") }}
+                    Button(
+                        onClick = { showWipeDialog = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        )
+                    ) {
+                        Text("Wipe All Data")
+                    }
                 }
             }
         }
-    }
+
 
     if (showWipeDialog) {
         AlertDialog(

@@ -60,12 +60,12 @@ fun DashboardScreen(
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val spendingByCategory by viewModel.spendingByCategory.collectAsStateWithLifecycle()
     val safeToSpend by viewModel.safeToSpend.collectAsStateWithLifecycle()
-    val selectedMonth by viewModel.selectedMonth.collectAsStateWithLifecycle()
     val density = LocalDensity.current
+    val currentPeriod by viewModel.currentPeriod.collectAsStateWithLifecycle()
     val swipeThresholdPx = remember(density) { with(density) { 48.dp.toPx() } }
     var totalDrag by remember { mutableFloatStateOf(0f) }
-    val onPrevious = viewModel::previousMonth
-    val onNext = viewModel::nextMonth
+    val onPrevious = viewModel::previousPeriod
+    val onNext = viewModel::nextPeriod
 
     LazyColumn(
         modifier = Modifier
@@ -93,7 +93,7 @@ fun DashboardScreen(
     ) {
         item {
             MonthSelector(
-                label = selectedMonth.label(),
+                label = currentPeriod.label(),
                 onPrevious = onPrevious,
                 onNext = onNext
             )

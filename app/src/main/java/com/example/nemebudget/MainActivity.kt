@@ -57,9 +57,7 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import com.example.nemebudget.ui.theme.NemeBudgetTheme
 import com.example.nemebudget.llm.ExtractedTransaction
 import com.example.nemebudget.llm.LlmPipeline
-import com.example.nemebudget.pipeline.NotificationBatchProcessor
 import com.example.nemebudget.db.AppDatabase
-import com.example.nemebudget.repository.FakeRepository
 import com.example.nemebudget.repository.RealRepository
 import com.example.nemebudget.ui.dashboard.DashboardScreen
 import com.example.nemebudget.ui.navigation.AppDestination
@@ -154,7 +152,7 @@ private fun MainApp() {
                 showModelImportDialog = false
                 repo.refreshModelStatus()
             } else {
-                modelImportError = "Could not install model from selected ZIP. Verify it contains mlc-chat-config.json."
+                modelImportError = "Could not install model from selected file. Verify it is a .literlm."
             }
         }
     }
@@ -329,7 +327,7 @@ private fun MainApp() {
             title = { Text("Model Setup Needed") },
             text = {
                 Text(
-                    "The local model folder is missing. Select your model ZIP (for example, Qwen3-o.6B-q4f16-MLC.zip) so the app can install it into internal storage."
+                    "The local model folder is missing. Select your model file(for example, gemma 4-2b.literlm) so the app can install it into internal storage."
                 )
             },
             confirmButton = {
