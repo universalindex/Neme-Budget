@@ -8,22 +8,13 @@ import com.example.nemebudget.repository.AppRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import com.example.nemebudget.model.AppSettings
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
-import com.example.nemebudget.model.previous
-import com.example.nemebudget.model.BudgetPeriod
 import kotlinx.coroutines.flow.combine
-import com.example.nemebudget.model.periodContaining
-import com.example.nemebudget.model.BudgetPeriodConfig
-import com.example.nemebudget.model.next
+
 class DashboardViewModel(private val repo: AppRepository) : ViewModel() {
 
     private val settings: StateFlow<AppSettings> = repo.getSettings()

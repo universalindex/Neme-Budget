@@ -38,7 +38,7 @@ object TransactionalNotificationGate {
     private val TRANSACTION_ACTION_WORDS = setOf(
         "spent", "purchase", "purchased", "charged", "charge", "paid", "payment",
         "debit", "credit", "withdrawal", "withdrawn", "deposit", "deposited",
-        "received", "sent", "transfer", "transferred", "refund", "autopay"
+        "received", "sent", "transfer", "transferred", "refund", "autopay", "card"
     )
 
     private val BANK_CONTEXT_WORDS = setOf(

@@ -1,4 +1,4 @@
-package com.example.nemebudget.model
+package com.example.nemebudget.viewmodel
 
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -81,7 +81,7 @@ fun periodContaining(config: BudgetPeriodConfig, referenceMillis: Long): BudgetP
                 timeInMillis = config.anchorMillis
                 setStartOfDay()
             }
-            val daysSinceAnchor = ((cal.timeInMillis - anchor.timeInMillis) / 86_400_000L).toInt()
+            val daysSinceAnchor = (Math.floorDiv((cal.timeInMillis - anchor.timeInMillis), 86_400_000L)).toInt()
             val periodsElapsed = Math.floorDiv(daysSinceAnchor, 14)
             anchor.add(Calendar.DAY_OF_MONTH, periodsElapsed * 14)
             val start = anchor.timeInMillis

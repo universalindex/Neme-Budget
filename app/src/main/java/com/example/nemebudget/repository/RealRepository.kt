@@ -13,7 +13,7 @@ import androidx.core.content.ContextCompat
 import com.example.nemebudget.db.AppDatabase
 import com.example.nemebudget.db.RawNotification
 import com.example.nemebudget.db.toEntity
-import com.example.nemebudget.model.BudgetPeriodConfig
+import com.example.nemebudget.viewmodel.BudgetPeriodConfig
 import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.Budget
@@ -43,6 +43,7 @@ import java.util.Date
 import java.util.Calendar
 import java.util.Locale
 import org.json.JSONObject
+import androidx.core.content.edit
 
 /**
  * RealRepository - The TRUE data source that connects the UI to the database.
@@ -436,7 +437,7 @@ class RealRepository(
 
     override suspend fun wipeAllData() {
         db.clearAllTables()
-        prefs.edit().clear().apply()
+        prefs.edit { clear() }
         settingsFlow.value = AppSettings()
         modelStatusFlow.value = buildCurrentModelStatus()
     }
@@ -571,7 +572,6 @@ class RealRepository(
                     when (pc.optString("type")) {
                         "WEEKLY" -> BudgetPeriodConfig.Weekly(pc.optInt("startDayOfWeek", Calendar.SUNDAY))
                         "BIWEEKLY" -> BudgetPeriodConfig.Biweekly(
-                            startDayOfWeek = pc.optInt("startDayOfWeek", Calendar.SUNDAY),
                             anchorMillis = pc.optLong("anchorMillis", System.currentTimeMillis())
                         )
                         "SEMI_MONTHLY" -> BudgetPeriodConfig.SemiMonthly
@@ -630,6 +630,26 @@ class RealRepository(
                     })
                 }
             })
+            put("periodConfig", JSONObject().apply {
+                when (val config = settings.periodConfig) {
+                    is BudgetPeriodConfig.Weekly -> {
+                        put("type", "WEEKLY")
+                        put("startDayOfWeek", config.startDayOfWeek)
+                    }
+                    is BudgetPeriodConfig.Biweekly -> {
+                        put("type", "BIWEEKLY")
+                        put("anchorMillis", config.anchorMillis)
+                    }
+                    is BudgetPeriodConfig.SemiMonthly -> {
+                        put("type", "SEMI_MONTHLY")
+                    }
+                    is BudgetPeriodConfig.Monthly -> {
+                        put("type", "MONTHLY")
+                    }
+                    // SemiMonthly and Monthly: type string only
+                }
+            })
+
             put("hiddenCategoryIds", org.json.JSONArray(settings.hiddenCategoryIds.toList()))
         }
         prefs.edit().putString(settingsKey, root.toString()).apply()

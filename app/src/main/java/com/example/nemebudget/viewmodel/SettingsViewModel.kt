@@ -14,10 +14,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import com.example.nemebudget.model.BudgetPeriodConfig
 import kotlin.math.min
-import com.example.nemebudget.llm.LlmPipeline
-import com.example.nemebudget.repository.RealRepository
 
 class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
 

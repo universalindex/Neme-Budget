@@ -1,5 +1,7 @@
 package com.example.nemebudget.model
 
+import com.example.nemebudget.viewmodel.BudgetPeriodConfig
+
 enum class TransactionType(val label: String) {
     EXPENSE("Expense"),
     INCOME("Income")

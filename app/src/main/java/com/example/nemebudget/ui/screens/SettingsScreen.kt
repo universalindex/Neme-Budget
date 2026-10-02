@@ -1,6 +1,7 @@
 package com.example.nemebudget.ui.screens
 
 import android.Manifest
+import android.R
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -8,10 +9,11 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
-import android.app.DatePickerDialog
-import com.example.nemebudget.model.BudgetPeriodConfig
+import com.example.nemebudget.viewmodel.BudgetPeriodConfig
 import androidx.compose.runtime.rememberCoroutineScope
-
+import android.app.DatePickerDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -19,20 +21,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.InputChip
 import kotlinx.coroutines.launch
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -72,6 +70,8 @@ import java.util.Calendar
 import androidx.compose.material3.RadioButton
 import java.util.Locale
 import androidx.compose.material3.FilterChip
+import androidx.core.app.NotificationCompat
+
 private data class DeviceAppItem(
     val label: String,
     val packageName: String
@@ -108,6 +108,31 @@ private fun DayOfWeekChipRow(selectedDay: Int, onDaySelected: (Int) -> Unit) {
                 label = { Text(letter) }
             )
         }
+    }
+}
+@Composable
+private fun AnchorDateButton(anchorMillis: Long, onAnchorPicked: (Long) -> Unit) {
+    val context = LocalContext.current
+    val cal = Calendar.getInstance().apply { timeInMillis = anchorMillis }
+    Text("Period start date:")
+    Text("Budget will refresh every 14 days after this date", style = MaterialTheme.typography.bodySmall)
+    Button(
+        onClick = {
+            DatePickerDialog(
+                context,
+                { _, year, month, dayOfMonth ->
+                    cal.set(year, month, dayOfMonth, 0, 0, 0)
+                    cal.set(Calendar.MILLISECOND, 0)
+                    onAnchorPicked(cal.timeInMillis)
+                },
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH),
+                cal.get(Calendar.DAY_OF_MONTH
+                )
+            ).show()
+        },
+    ) {
+        Text(SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date(anchorMillis)))
     }
 }
 @Composable
@@ -234,6 +259,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                     )
                     if (settings.periodConfig is BudgetPeriodConfig.Weekly) {
                         val current = settings.periodConfig as BudgetPeriodConfig.Weekly
+                        Text("Week start day")
                         DayOfWeekChipRow(
                             selectedDay = current.startDayOfWeek,
                             onDaySelected = { day -> viewModel.updatePeriodConfig(BudgetPeriodConfig.Weekly(day)) }
@@ -646,7 +672,7 @@ private fun loadInstalledLaunchableApps(packageManager: PackageManager): List<De
  * This is used for debugging the BankNotificationListenerService encryption pipeline.
  */
 private fun postTestNotification(
-    context: android.content.Context,
+    context: Context,
     notificationTitle: String,
     notificationText: String
 ) {
@@ -655,25 +681,25 @@ private fun postTestNotification(
         return
     }
 
-    val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     // Create a notification channel for Android 8+
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-        val channel = android.app.NotificationChannel(
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(
             "test_bank_channel",
             "Test Bank Notifications",
-            android.app.NotificationManager.IMPORTANCE_HIGH
+            NotificationManager.IMPORTANCE_HIGH
         )
         notificationManager.createNotificationChannel(channel)
     }
 
     val resolvedTitle = notificationTitle.ifBlank { "Card Guard" }
 
-    val notification = androidx.core.app.NotificationCompat.Builder(context, "test_bank_channel")
-        .setSmallIcon(android.R.drawable.ic_dialog_info)
+    val notification = NotificationCompat.Builder(context, "test_bank_channel")
+        .setSmallIcon(R.drawable.ic_dialog_info)
         .setContentTitle(resolvedTitle)
         .setContentText(notificationText)
-        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
         .setAutoCancel(true)
         .build()
 

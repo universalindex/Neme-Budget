@@ -1,7 +1,9 @@
-package com.example.nemebudget.ui.dashboard
-
+package com.example.nemebudget.ui.dashboarda
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
+import java.util.Calendar
+import android.app.DatePickerDialog
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -94,8 +96,10 @@ fun DashboardScreen(
         item {
             MonthSelector(
                 label = currentPeriod.label(),
+                startMillis = currentPeriod.startMillis,
                 onPrevious = onPrevious,
-                onNext = onNext
+                onNext = onNext,
+                onJumpToDate = viewModel::jumpToDate
             )
         }
 
@@ -120,17 +124,37 @@ fun DashboardScreen(
 private fun MonthSelector(
     label: String,
     onPrevious: () -> Unit,
-    onNext: () -> Unit
-) {
+    onNext: () -> Unit,
+    onJumpToDate: (Long) -> Unit,
+    startMillis: Long
+)
+{
+    val cal = Calendar.getInstance().apply { timeInMillis = startMillis }
+    val context = LocalContext.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
+
     ) {
         IconButton(onClick = onPrevious) {
             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Previous month")
         }
-        Text(text = label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(text = label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.clickable {
+        DatePickerDialog(
+                context,
+                { _, year, month, dayOfMonth ->
+                    cal.set(year, month, dayOfMonth, 0, 0, 0)
+                    cal.set(Calendar.MILLISECOND, 0)
+                    onJumpToDate(cal.timeInMillis)
+                },
+                cal.get(Calendar.YEAR),            // add this line
+        cal.get(Calendar.MONTH),           // add this line
+                cal.get(Calendar.DAY_OF_MONTH)
+            ).show()
+        }
+        )
         IconButton(onClick = onNext) {
             Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = "Next month")
         }

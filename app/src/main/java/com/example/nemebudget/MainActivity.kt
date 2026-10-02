@@ -59,7 +59,7 @@ import com.example.nemebudget.llm.ExtractedTransaction
 import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.db.AppDatabase
 import com.example.nemebudget.repository.RealRepository
-import com.example.nemebudget.ui.dashboard.DashboardScreen
+import com.example.nemebudget.ui.dashboarda.DashboardScreen
 import com.example.nemebudget.ui.navigation.AppDestination
 import com.example.nemebudget.ui.navigation.bottomDestinations
 import com.example.nemebudget.ui.screens.ManageRulesScreen
