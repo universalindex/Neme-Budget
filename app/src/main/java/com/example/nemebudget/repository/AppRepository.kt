@@ -2,7 +2,6 @@ package com.example.nemebudget.repository
 
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.Budget
-import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.ModelStatus
 import com.example.nemebudget.model.RejectedNotification
 import com.example.nemebudget.model.Transaction
@@ -17,7 +16,6 @@ interface AppRepository {
 
     fun getBudgets(): Flow<List<Budget>>
     suspend fun upsertBudget(budget: Budget)
-    suspend fun deleteBudget(category: Category)
     suspend fun addCustomBudgetCategory(label: String, emoji: String, limit: Double)
     suspend fun updateBudgetCategoryMeta(budgetId: String, label: String, emoji: String)
     suspend fun deleteCustomBudgetCategory(budgetId: String)

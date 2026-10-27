@@ -3,7 +3,6 @@ package com.example.nemebudget.db
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.nemebudget.model.AppSettings
-import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.Transaction
 import com.example.nemebudget.model.resolveCategoryById
@@ -27,10 +26,8 @@ data class TransactionEntity(
         val snapshotCategory = CategoryDefinition(
             id = categoryId.ifBlank { categoryLabel },
             label = categoryLabel,
-            emoji = categoryEmoji.ifBlank {
-                Category.entries.firstOrNull { it.label.equals(categoryLabel, ignoreCase = true) }?.emoji ?: ""
-            },
-            isCustom = !Category.entries.any { it.name.equals(categoryId, ignoreCase = true) }
+            emoji = categoryEmoji,
+            isCustom = true
         )
 
         val resolvedCategory = settings?.resolveCategoryById(categoryId)

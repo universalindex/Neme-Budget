@@ -55,35 +55,21 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     private val _totalCount = MutableStateFlow(0)
     val totalCount: StateFlow<Int> = _totalCount
     private var hasAttemptedStartupProcessing = false
-    private var primaryBankSaveJob: Job? = null
 
     init {
         refreshCount()
     }
 
-
-    fun updatePrimaryBank(bank: String) {
-        val updated = settings.value.copy(primaryBank = bank)
-        primaryBankSaveJob?.cancel()
-        primaryBankSaveJob = viewModelScope.launch {
-            delay(500)
-            repo.saveSettings(updated)
-        }
+    fun setProcessNow(enabled: Boolean) {
+    viewModelScope.launch {
+        repo.saveSettings(settings.value.copy(processNow = enabled))
     }
+}
     fun updatePeriodConfig(config: BudgetPeriodConfig) {
         val updated = settings.value.copy(periodConfig = config)
         viewModelScope.launch {
             repo.saveSettings(updated)
         }
-    }
-    fun toggleIgnoredApp(packageName: String) {
-        val current = settings.value
-        val updated = if (packageName in current.ignoredApps) {
-            current.ignoredApps - packageName
-        } else {
-            current.ignoredApps + packageName
-        }
-        saveSettings(current.copy(ignoredApps = updated))
     }
 
     fun setIgnoredApp(packageName: String, ignored: Boolean) {
@@ -145,7 +131,6 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
             repo.saveSettings(updated)
         }
     }
-
     private fun processPendingInternal(limit: Int, startup: Boolean) {
         viewModelScope.launch {
             if (startup) {

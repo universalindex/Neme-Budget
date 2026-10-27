@@ -137,7 +137,9 @@ fun OnboardingPermissionScreen(
         Text("Permissions", style = MaterialTheme.typography.headlineSmall)
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            "Neme Budget needs notification access to scan bank alerts locally, and notification permission so the in-app test alert can be posted during setup.",
+            "NemeBudget needs notification access to scan bank alerts locally, and notification permission so the in-app test alert can be posted during setup." +
+                    "NemeBudget will be able to to see all notifications from all apps, and will filter them on device: Only notifications that look like bank alerts will kept. " +
+                    "Saved notifications are kept encrypted on device. Nothing is shared",
             style = MaterialTheme.typography.bodyMedium
         )
         Spacer(modifier = Modifier.height(20.dp))

@@ -24,7 +24,8 @@ interface TransactionDao {
      */
     @Query("SELECT * FROM transactions ORDER BY date DESC")
     fun getAllTransactions(): Flow<List<TransactionEntity>>
-    
+    @Query("UPDATE transactions SET categoryId = :newId, categoryLabel = :newLabel, categoryEmoji = :newEmoji WHERE categoryId = :oldId")
+    suspend fun reassignCategory(oldId: String, newId: String, newLabel: String, newEmoji: String)
     /**
      * Get transactions within a date range.
      * Example: get all transactions for the current month.

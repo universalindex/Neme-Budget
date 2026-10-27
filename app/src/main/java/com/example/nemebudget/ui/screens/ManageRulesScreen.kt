@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import com.example.nemebudget.model.RuleAction
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
@@ -92,7 +93,7 @@ fun ManageRulesScreen(
 			}
 
 			item { Text("Manage Rules", style = MaterialTheme.typography.headlineSmall) }
-			item { Text("Rules are typed: pick a field, enter text to match, then choose the category.", style = MaterialTheme.typography.bodySmall) }
+			item { Text("Enter Rule:pick a field, enter text to match, then choose the category.", style = MaterialTheme.typography.bodySmall) }
 
 			item {
 				OutlinedTextField(
@@ -102,7 +103,14 @@ fun ManageRulesScreen(
 					label = { Text("Search rules") }
 				)
 			}
-
+			if (filteredRules.isEmpty()) {
+				item {
+					if (settings.customRules.isEmpty())
+						EmptyState("🧩", "No rules yet", "Tap the + to create a rule that sorts or ignores notifications.")
+					else
+						EmptyState("🔍", "No matches", "No rules match your search.")
+				}
+			}
 			items(filteredRules, key = { it.id }) { rule ->
 				Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
 					Row(
@@ -162,11 +170,14 @@ private fun AddRuleSheet(
 	var matchField by remember(initialRule) { mutableStateOf(initialRule?.matchField ?: RuleField.MERCHANT) }
 	var query by remember(initialRule) { mutableStateOf(initialRule?.query.orEmpty()) }
 	var selectedCategory by remember(initialRule) { mutableStateOf(initialRule?.targetCategory ?: categoryOptions.firstOrNull()?.label.orEmpty()) }
+	var action by remember(initialRule) { mutableStateOf(initialRule?.action ?: RuleAction.SET_CATEGORY) }
+	var forcedMerchant by remember(initialRule) { mutableStateOf(initialRule?.forcedMerchant.orEmpty()) }
 
 	ModalBottomSheet(
 		onDismissRequest = onDismiss,
 		sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 	) {
+
 		Column(
 			modifier = Modifier
 				.fillMaxWidth()
@@ -188,7 +199,16 @@ private fun AddRuleSheet(
 					}
 				}
 			}
-
+			Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+				Text("Action", style = MaterialTheme.typography.labelLarge)
+				RuleAction.entries.chunked(2).forEach { rowActions ->
+					Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+						rowActions.forEach { a ->
+							InputChip(selected = action == a, onClick = { action = a }, label = { Text(a.label) })
+						}
+					}
+				}
+			}
 			OutlinedTextField(
 				value = query,
 				onValueChange = { query = it },
@@ -197,11 +217,23 @@ private fun AddRuleSheet(
 				keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
 				keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
 			)
+			when (action) {
+    RuleAction.SET_CATEGORY -> {
+		if (categoryOptions.isEmpty()) {
+			Text(
+				"You need a budget category first. Create one in Budgets, then come back.",
+				style = MaterialTheme.typography.bodyMedium,
+				color = MaterialTheme.colorScheme.error
+			)
+		} else {
 
 			Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 				Text("Category", style = MaterialTheme.typography.labelLarge)
 				categoryOptions.chunked(2).forEach { rowCategories ->
-					Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+					Row(
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+						modifier = Modifier.fillMaxWidth()
+					) {
 						rowCategories.forEach { category ->
 							InputChip(
 								selected = selectedCategory == category.label,
@@ -212,6 +244,20 @@ private fun AddRuleSheet(
 					}
 				}
 			}
+		}
+	}
+		RuleAction.SET_MERCHANT -> OutlinedTextField(
+		value = forcedMerchant,
+		onValueChange = { forcedMerchant = it },
+		modifier = Modifier.fillMaxWidth(),
+		label = { Text("Set merchant to") }
+		)
+		RuleAction.IGNORE -> Text(
+		"Matching notifications will be skipped and never become transactions.",
+		style = MaterialTheme.typography.bodySmall
+		)
+	}
+
 
 			Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
 				TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
@@ -222,11 +268,17 @@ private fun AddRuleSheet(
 								id = initialRule?.id ?: "rule_${System.currentTimeMillis()}_${UUID.randomUUID()}",
 								matchField = matchField,
 								query = query.trim(),
-								targetCategory = selectedCategory
+								targetCategory = if (action == RuleAction.SET_CATEGORY) selectedCategory else "",
+								action = action,
+								forcedMerchant = if (action == RuleAction.SET_MERCHANT) forcedMerchant.trim() else null
 							)
 						)
 					},
-					enabled = query.trim().isNotBlank() && selectedCategory.isNotBlank(),
+					enabled = query.trim().isNotBlank() && when (action) {
+						RuleAction.SET_CATEGORY -> selectedCategory.isNotBlank()
+						RuleAction.SET_MERCHANT -> forcedMerchant.isNotBlank()
+						RuleAction.IGNORE -> true
+					},
 					modifier = Modifier.weight(1f)
 				) { Text("Save") }
 			}

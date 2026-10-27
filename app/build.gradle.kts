@@ -7,11 +7,11 @@ plugins {
 
 android {
     namespace = "com.example.nemebudget"
-    compileSdk = 36
+    compileSdk = 37
     assetPacks.add(":model_weights")
 
     defaultConfig {
-        applicationId = "com.example.nemebudget"
+        applicationId = "com.nemebudget.app"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -52,7 +52,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.compose.material.icons)
-    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.1")
 
     // 1. The Official Pre-Compiled MLC LLM Engine (Loaded from your local libs folder)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))

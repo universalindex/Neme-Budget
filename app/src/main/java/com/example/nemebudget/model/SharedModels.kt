@@ -24,32 +24,19 @@ data class CategoryDefinition(
     val label: String,
     val emoji: String,
     val isCustom: Boolean = false
-)
+    )
 
-enum class Category(val label: String, val emoji: String) {
-    DINING("Dining", "\uD83C\uDF54"),
-    GROCERIES("Groceries", "\uD83D\uDED2"),
-    GAS("Gas", "\u26FD"),
-    BILLS("Bills", "\uD83D\uDCA1"),
-    SUBSCRIPTIONS("Subscriptions", "\uD83D\uDCFA"),
-    ENTERTAINMENT("Entertainment", "\uD83C\uDFAC"),
-    SHOPPING("Shopping", "\uD83D\uDED2"),
-    TRANSPORT("Transport", "\uD83D\uDE97"),
-    HEALTH("Health", "\uD83D\uDC8A"),
-    TRAVEL("Travel", "\u2708"),
-    OTHER("Other", "\uD83D\uDCB3")
-}
+
 
 data class Budget(
     val id: String,
-    val category: Category?,
     val label: String,
     val emoji: String,
     val spent: Double,
     val limit: Double,
     val isCustom: Boolean
 )
-
+val UNCATEGORIZED = CategoryDefinition(id = "uncategorized", label = "Uncategorized", emoji = "❓")
 data class CategoryPresentation(
     val label: String,
     val emoji: String
@@ -69,7 +56,8 @@ enum class RuleField(val label: String) {
 
 enum class RuleAction(val label: String) {
     SET_CATEGORY("Set category"),
-    SET_MERCHANT("Set merchant")
+    SET_MERCHANT("Set merchant"),
+    IGNORE("Ignore rule")
 }
 
 data class RuleDefinition(
@@ -83,30 +71,15 @@ data class RuleDefinition(
     fun displayLabel(): String = when (action) {
         RuleAction.SET_CATEGORY -> "${matchField.label}: $query → $targetCategory"
         RuleAction.SET_MERCHANT -> "${matchField.label}: $query → merchant '$forcedMerchant'"
+        RuleAction.IGNORE -> "${matchField.label}: $query → ignore"
     }
 }
 
-fun Category.toDefinition(): CategoryDefinition = CategoryDefinition(
-    id = name,
-    label = label,
-    emoji = emoji,
-    isCustom = false
-)
 
-fun AppSettings.allCategoryOptions(): List<CategoryDefinition> {
-    val customCategories = customBudgetCategories.map {
+fun AppSettings.allCategoryOptions(): List<CategoryDefinition> =
+    customBudgetCategories.map {
         CategoryDefinition(id = it.id, label = it.label, emoji = it.emoji, isCustom = true)
     }
-    val builtInWithPresentations = Category.entries.map { category ->
-        val override = categoryPresentation[category.name]
-        if (override != null) {
-            CategoryDefinition(id = category.name, label = override.label, emoji = override.emoji, isCustom = false)
-        } else {
-            category.toDefinition()
-        }
-    }
-    return builtInWithPresentations + customCategories
-}
 
 fun AppSettings.activeCategoryOptions(): List<CategoryDefinition> {
     return allCategoryOptions().filterNot { hiddenCategoryIds.contains(it.id) }
@@ -131,14 +104,12 @@ fun AppSettings.resolveActiveCategoryByLabel(categoryLabel: String): CategoryDef
 }
 
 data class AppSettings(
-    val primaryBank: String = "",
     val ignoredApps: Set<String> = emptySet(),
     val customRules: List<RuleDefinition> = emptyList(),
-    val budgetLimits: Map<Category, Double> = emptyMap(),
-    val categoryPresentation: Map<String, CategoryPresentation> = emptyMap(),
     val customBudgetCategories: List<CustomBudgetCategory> = emptyList(),
     val hiddenCategoryIds: Set<String> = emptySet(),
-    val periodConfig: BudgetPeriodConfig = BudgetPeriodConfig.Monthly
+    val periodConfig: BudgetPeriodConfig = BudgetPeriodConfig.Monthly,
+    val processNow: Boolean = false
 )
 
 data class RejectedNotification(

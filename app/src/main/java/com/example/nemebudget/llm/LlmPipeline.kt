@@ -2,11 +2,9 @@ package com.example.nemebudget.llm
 import android.content.Context
 import android.util.Log
 import com.example.nemebudget.model.CategoryDefinition
-import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.RuleAction
 import com.example.nemebudget.model.RuleDefinition
 import com.example.nemebudget.model.RuleField
-import com.example.nemebudget.model.toDefinition
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -137,11 +135,19 @@ You MUST USE THIS TOOL. DO NOTHING ELSE
 Rules:
     Merchant: Prioritize store/payee names. Exclude card/reference numbers.
     Amount: Use the transaction value. Ignore balances or limits.
-    Category: Select the most relevant category or "Other".
+    Category: Choose the category that best matches the transaction
     Fallback: If no transaction is found, return "Error" for merchant and 0.0 for amount.
-Example:
+Examples:
 Notification: America First Alert: Card Guard Credit Card *3320 $9.13 at SQ *Kiwi Loco Frozen Y.
 Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
+
+Notification: Chase LoLo Hawaiian BBQ, Orem, Utah $15.18
+Output: {"merchant": "Smiths", "amount": 15.18, "category": "Shopping"}
+
+Infer information from notification content:
+For example if part of the notification mentions a restaurant and there is a dining category:
+Output the name of the restaurant for merchant, and "Dining" for category.
+
 """.trimIndent()
 
 
@@ -436,45 +442,29 @@ Correction rules:
 
     private fun loadCategoryCatalog(): List<CategoryDefinition> {
         val prefs = context.applicationContext.getSharedPreferences("nemebudget_prefs", Context.MODE_PRIVATE)
-        val json = prefs.getString("app_settings_json", null) ?: return Category.entries.map { it.toDefinition() }
-
+        val json = prefs.getString("app_settings_json", null) ?: return emptyList()
         return try {
             val root = JSONObject(json)
-            val list = mutableListOf<CategoryDefinition>()
-
-            Category.entries.forEach { category ->
-                val presentation = root.optJSONObject("categoryPresentation")?.optJSONObject(category.name)
-                list += CategoryDefinition(
-                    id = category.name,
-                    label = presentation?.optString("label").takeUnless { it.isNullOrBlank() } ?: category.label,
-                    emoji = presentation?.optString("emoji").takeUnless { it.isNullOrBlank() } ?: category.emoji,
-                    isCustom = false
-                )
-            }
-
-            val customArray = root.optJSONArray("customBudgetCategories") ?: JSONArray()
-            val hiddenIds = root.optJSONArray("hiddenCategoryIds")?.let { hiddenArray ->
+            val hiddenIds = root.optJSONArray("hiddenCategoryIds")?.let { arr ->
                 buildSet {
-                    for (index in 0 until hiddenArray.length()) {
-                        hiddenArray.optString(index).takeIf { it.isNotBlank() }?.let { add(it.removePrefix("builtin:")) }
+                    for (i in 0 until arr.length()) {
+                        arr.optString(i).takeIf { it.isNotBlank() }?.let { add(it) }
                     }
                 }
             } ?: emptySet()
-
-            list.removeAll { hiddenIds.contains(it.id) }
-
-            for (index in 0 until customArray.length()) {
-                val item = customArray.optJSONObject(index) ?: continue
-                val id = item.optString("id").ifBlank { continue }
-                val label = item.optString("label").ifBlank { continue }
-                val emoji = item.optString("emoji").ifBlank { "📁" }
-                if (hiddenIds.contains(id)) continue
-                list += CategoryDefinition(id = id, label = label, emoji = emoji, isCustom = true)
+            val customArray = root.optJSONArray("customBudgetCategories") ?: JSONArray()
+            buildList {
+                for (index in 0 until customArray.length()) {
+                    val item = customArray.optJSONObject(index) ?: continue
+                    val id = item.optString("id").ifBlank { continue }
+                    val label = item.optString("label").ifBlank { continue }
+                    val emoji = item.optString("emoji").ifBlank { "📁" }
+                    if (id in hiddenIds) continue
+                    add(CategoryDefinition(id = id, label = label, emoji = emoji, isCustom = true))
+                }
             }
-
-            if (list.isEmpty()) Category.entries.map { it.toDefinition() } else list
         } catch (_: Throwable) {
-            Category.entries.map { it.toDefinition() }
+            emptyList()
         }
     }
 

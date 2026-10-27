@@ -88,7 +88,15 @@ fun BudgetsScreen(viewModel: BudgetsViewModel) {
             item {
                 Text("Budgets", style = MaterialTheme.typography.headlineSmall)
             }
-
+            if (budgets.isEmpty()) {
+                item {
+                    EmptyState(
+                        emoji = "💰",
+                        title = "No budgets yet",
+                        message = "Tap the + to add your first budget."
+                    )
+                }
+            }
             item {
                 AnimatedVisibility(visible = overBudget.isNotEmpty()) {
                     val offender = overBudget.firstOrNull()
@@ -347,7 +355,7 @@ private fun BudgetEditBottomSheet(
 
     if (showDeleteConfirm) {
         val destructiveTitle = "Delete category?"
-        val destructiveMessage = "This will archive '${budget.label}' so it no longer appears in pickers and budget lists."
+        val destructiveMessage = "This will delete '${budget.label}', it will remove any rules referencing it and designate all transactions that belong to it as 'Uncategorized'"
 
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },

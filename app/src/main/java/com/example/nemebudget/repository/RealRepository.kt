@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import com.example.nemebudget.model.UNCATEGORIZED
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -17,7 +18,6 @@ import com.example.nemebudget.viewmodel.BudgetPeriodConfig
 import com.example.nemebudget.llm.LlmPipeline
 import com.example.nemebudget.model.AppSettings
 import com.example.nemebudget.model.Budget
-import com.example.nemebudget.model.Category
 import com.example.nemebudget.model.CategoryPresentation
 import com.example.nemebudget.model.CategoryDefinition
 import com.example.nemebudget.model.CustomBudgetCategory
@@ -44,6 +44,8 @@ import java.util.Calendar
 import java.util.Locale
 import org.json.JSONObject
 import androidx.core.content.edit
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * RealRepository - The TRUE data source that connects the UI to the database.
@@ -65,6 +67,7 @@ class RealRepository(
 ) : AppRepository {
 
     private val TAG = "RealRepository"
+    private val processingMutex = Mutex()
     private val prefs = context.applicationContext.getSharedPreferences("nemebudget_prefs", Context.MODE_PRIVATE)
     private val modelFingerprintKey = "model_fingerprint"
     private val settingsKey = "app_settings_json"
@@ -115,72 +118,35 @@ class RealRepository(
      * Calculate budgets by summing transactions by category and type.
      * The UI calls this to show "Spent $X of $Y in Dining".
      */
-    override fun getBudgets(): Flow<List<Budget>> {
-        return combine(getAllTransactions(), settingsFlow) { transactions, settings ->
-            val expensesByCategory = transactions
-                 .groupBy { it.category.id }
-                 .mapValues { (_, txns) -> txns.sumOf { it.amount } }
-
-            val defaultLimits = defaultBudgetLimits()
-            val activeCategories = settings.activeCategoryOptions()
-            val builtInBudgets = activeCategories.filter { !it.isCustom && Category.entries.any { category -> category.name == it.id } }.map { categoryDef ->
-                val category = Category.entries.first { it.name == categoryDef.id }
-                Budget(
-                    id = "$BUILTIN_PREFIX${category.name}",
-                    category = category,
-                    label = categoryDef.label,
-                    emoji = categoryDef.emoji,
-                    spent = expensesByCategory[category.name] ?: 0.0,
-                    limit = settings.budgetLimits[category] ?: defaultLimits.getValue(category),
-                    isCustom = false
-                )
-            }
-
-            val customBudgets = settings.customBudgetCategories.filterNot { settings.hiddenCategoryIds.contains(it.id) }.map { custom ->
-                Budget(
-                    id = custom.id,
-                    category = null,
-                    label = custom.label,
-                    emoji = custom.emoji,
-                    spent = expensesByCategory[custom.id] ?: 0.0,
-                    limit = custom.limit,
-                    isCustom = true
-                )
-            }
-
-            builtInBudgets + customBudgets
+    override fun getBudgets(): Flow<List<Budget>> =
+        combine(getAllTransactions(), settingsFlow) { transactions, settings ->
+            val spent = transactions.groupBy { it.category.id }
+                .mapValues { (_, t) -> t.sumOf { it.amount } }
+            settings.customBudgetCategories
+                .filterNot { it.id in settings.hiddenCategoryIds }
+                .map { c ->
+                    Budget(c.id, c.label, c.emoji, spent[c.id] ?: 0.0, c.limit, isCustom = true)
+                }
         }
-    }
 
     /**
      * Upsert = "Update or Insert": add budget if it doesn't exist, update if it does.
      * For now, we're calculating budgets from transactions, so this stores the user's chosen limit.
      */
     override suspend fun upsertBudget(budget: Budget) {
-        val updated = if (budget.isCustom) {
-            settingsFlow.value.copy(
-                customBudgetCategories = settingsFlow.value.customBudgetCategories.map { current ->
-                    if (current.id == budget.id) current.copy(limit = budget.limit) else current
-                }
-            )
-        } else {
-            val category = budget.category ?: return
-            settingsFlow.value.copy(
-                budgetLimits = settingsFlow.value.budgetLimits + (category to budget.limit)
-            )
-        }
+        val updated = settingsFlow.value.copy(
+            customBudgetCategories = settingsFlow.value.customBudgetCategories.map {
+                if (it.id == budget.id) it.copy(limit = budget.limit) else it
+            }
+        )
         settingsFlow.value = updated
         persistSettings(updated)
-        Log.d(TAG, "Budget upsert requested for ${budget.id}: $${budget.limit}")
     }
 
     /**
      * Delete a budget by category.
      * This removes the user's custom override and falls back to the default limit.
      */
-    override suspend fun deleteBudget(category: Category) {
-        softDeleteBudgetCategory(category.name)
-    }
 
     override suspend fun addCustomBudgetCategory(label: String, emoji: String, limit: Double) {
         val trimmedLabel = label.trim()
@@ -203,37 +169,21 @@ class RealRepository(
         val trimmedLabel = label.trim()
         if (trimmedLabel.isBlank()) return
         val cleanedEmoji = emoji.trim().ifBlank { "📁" }
-
-        val updated = if (budgetId.startsWith(BUILTIN_PREFIX)) {
-            val categoryName = budgetId.removePrefix(BUILTIN_PREFIX)
-            settingsFlow.value.copy(
-                categoryPresentation = settingsFlow.value.categoryPresentation +
-                    (categoryName to CategoryPresentation(label = trimmedLabel, emoji = cleanedEmoji))
-            )
-        } else {
-            settingsFlow.value.copy(
-                customBudgetCategories = settingsFlow.value.customBudgetCategories.map { current ->
-                    if (current.id == budgetId) current.copy(label = trimmedLabel, emoji = cleanedEmoji) else current
-                }
-            )
-        }
-
-        settingsFlow.value = updated
-        persistSettings(updated)
-    }
-
-    override suspend fun deleteCustomBudgetCategory(budgetId: String) {
-        softDeleteBudgetCategory(budgetId)
-    }
-
-    override suspend fun softDeleteBudgetCategory(budgetId: String) {
-        val normalizedId = normalizeBudgetId(budgetId)
         val updated = settingsFlow.value.copy(
-            hiddenCategoryIds = settingsFlow.value.hiddenCategoryIds + normalizedId
+            customBudgetCategories = settingsFlow.value.customBudgetCategories.map {
+                if (it.id == budgetId) it.copy(label = trimmedLabel, emoji = cleanedEmoji) else it
+            }
         )
         settingsFlow.value = updated
         persistSettings(updated)
-        Log.d(TAG, "Budget category archived: $normalizedId")
+    }
+
+    override suspend fun softDeleteBudgetCategory(budgetId: String) {
+        val updated = settingsFlow.value.copy(
+            hiddenCategoryIds = settingsFlow.value.hiddenCategoryIds + budgetId
+        )
+        settingsFlow.value = updated
+        persistSettings(updated)
     }
 
     /**
@@ -249,8 +199,6 @@ class RealRepository(
     override suspend fun saveSettings(settings: AppSettings) {
         settingsFlow.value = settings
         persistSettings(settings)
-        Log.d(TAG, "Settings saved: primaryBank=${settings.primaryBank}")
-        // TODO: Persist to DataStore/Room
     }
 
     /**
@@ -258,6 +206,30 @@ class RealRepository(
      */
     override fun getPendingNotificationCount(): Flow<Int> {
         return db.rawNotificationDao().getUnprocessedCount()
+    }
+    override suspend fun deleteCustomBudgetCategory(budgetId: String) {
+        val doomed = settingsFlow.value.customBudgetCategories
+            .firstOrNull { it.id == budgetId } ?: return
+
+        withContext(Dispatchers.IO) {
+            db.transactionDao().reassignCategory(
+                oldId = budgetId,
+                newId = UNCATEGORIZED.id,
+                newLabel = UNCATEGORIZED.label,
+                newEmoji = UNCATEGORIZED.emoji
+            )
+        }
+
+        val current = settingsFlow.value
+        val updated = current.copy(
+            customBudgetCategories = current.customBudgetCategories.filterNot { it.id == budgetId },
+            customRules = current.customRules.filterNot {
+                it.action == RuleAction.SET_CATEGORY &&
+                        it.targetCategory.equals(doomed.label, ignoreCase = true)
+            }
+        )
+        settingsFlow.value = updated
+        persistSettings(updated)
     }
 
     /**
@@ -273,113 +245,127 @@ class RealRepository(
         limit: Int,
         onProgress: ((processed: Int, total: Int, currentItemLabel: String?) -> Unit)?
     ): Int {
-        return withContext(Dispatchers.IO) {
-            val pending = db.rawNotificationDao().getUnprocessedRawNotifications(limit)
-            val total = pending.size
-            Log.d(TAG, "Processing $total pending notifications...")
+        return processingMutex.withLock {
+            withContext(Dispatchers.IO) {
+                val pending = db.rawNotificationDao().getUnprocessedRawNotifications(limit)
+                val total = pending.size
+                Log.d(TAG, "Processing $total pending notifications...")
 
-            var processedCount = 0
-            var completedCount = 0
-            onProgress?.invoke(0, total, null)
+                var processedCount = 0
+                var completedCount = 0
+                onProgress?.invoke(0, total, null)
 
-            pending.forEachIndexed { index, raw ->
-                val label = raw.title.ifBlank { raw.text.take(48) }
-                try {
-                    val gate = TransactionalNotificationGate.evaluate(raw.title, raw.text)
-                    if (!gate.passed) {
-                        Log.d(TAG, "Skipped rawId=${raw.id} before LLM: ${gate.reason}")
+                pending.forEachIndexed { index, raw ->
+                    val label = raw.title.ifBlank { raw.text.take(48) }
+                    try {
+                        val gate = TransactionalNotificationGate.evaluate(raw.title, raw.text)
+                        if (!gate.passed) {
+                            Log.d(TAG, "Skipped rawId=${raw.id} before LLM: ${gate.reason}")
+                            db.rawNotificationDao().markAsProcessed(raw.id)
+                            completedCount++
+                            onProgress?.invoke(completedCount, total, label)
+                            if ((index + 1) % 5 == 0) yield()
+                            return@forEachIndexed
+                        }
+                        findIgnoreRule(merchant = null, rawText = raw.text)?.let { rule ->
+                            Log.d(TAG, "Ignored rawId=${raw.id} by rule: ${rule.displayLabel()}")
+                            db.rawNotificationDao().markAsProcessed(raw.id)
+                            completedCount++
+                            onProgress?.invoke(completedCount, total, label)
+                            return@forEachIndexed
+                        }
+                        val result = llmPipeline.extractWithRetry(raw.text)
+                        findIgnoreRule(result.transaction.merchant, raw.text)?.let { rule ->
+                            db.rawNotificationDao().markAsProcessed(raw.id)
+                            completedCount++
+                            onProgress?.invoke(completedCount, total, label)
+                            return@forEachIndexed
+                        }
+                        val rejectReason = rejectionReasonFor(
+                            result.transaction.merchant,
+                            result.transaction.amount
+                        )
+                        if (rejectReason != null) {
+                            db.rawNotificationDao().markAsFailed(raw.id, rejectReason)
+                            if (result.transaction.merchant.equals("Error", ignoreCase = true)) {
+                                notifyRejectedExtraction(raw, rejectReason)
+                            }
+                            Log.w(TAG, "✗ Rejected extraction for rawId=${raw.id}: $rejectReason")
+                            completedCount++
+                            onProgress?.invoke(completedCount, total, label)
+                            if ((index + 1) % 5 == 0) yield()
+                            return@forEachIndexed
+                        }
+
+                        if (result.transaction.isVerified) {
+                            val txn = Transaction(
+                                merchant = result.transaction.merchant,
+                                amount = result.transaction.amount,
+                                category = settingsFlow.value.resolveActiveCategoryByLabel(result.transaction.category)
+                                    ?: UNCATEGORIZED,
+                                date = raw.postTimeMillis,
+                                isAiParsed = true,
+                                confidence = 0.95f,
+                                rawNotificationText = raw.text
+                            )
+
+                            db.transactionDao().insertTransaction(txn.toEntity())
+                            Log.d(TAG, "✓ Processed: ${txn.merchant} $${txn.amount}")
+                            processedCount++
+                        } else {
+                            val merchantOk = result.transaction.merchant != "Error" &&
+                                    result.transaction.merchant != "Unknown" &&
+                                    merchantAppearsInRaw(result.transaction.merchant, raw.text)
+                            val amountOk = result.transaction.amount > 0.0
+
+                            if (merchantOk && amountOk) {
+                                val rescued = Transaction(
+                                    merchant = result.transaction.merchant,
+                                    amount = result.transaction.amount,
+                                    category = UNCATEGORIZED,
+                                    date = raw.postTimeMillis,
+                                    isAiParsed = true,
+                                    confidence = 0.45f,
+                                    rawNotificationText = raw.text
+                                )
+                                db.transactionDao().insertTransaction(rescued.toEntity())
+                                processedCount++
+                                Log.w(
+                                    TAG,
+                                    "~ Rescued with OTHER category: ${result.transaction.verificationNotes}"
+                                )
+                            } else {
+                                Log.w(
+                                    TAG,
+                                    "✗ Verification failed and not recoverable: ${result.transaction.verificationNotes}"
+                                )
+                            }
+                        }
+
                         db.rawNotificationDao().markAsProcessed(raw.id)
                         completedCount++
                         onProgress?.invoke(completedCount, total, label)
                         if ((index + 1) % 5 == 0) yield()
-                        return@forEachIndexed
-                    }
 
-                    val result = llmPipeline.extractWithRetry(raw.text)
-
-                    val rejectReason = rejectionReasonFor(result.transaction.merchant, result.transaction.amount)
-                    if (rejectReason != null) {
-                        db.rawNotificationDao().markAsFailed(raw.id, rejectReason)
-                        if (result.transaction.merchant.equals("Error", ignoreCase = true)) {
-                            notifyRejectedExtraction(raw, rejectReason)
-                        }
-                        Log.w(TAG, "✗ Rejected extraction for rawId=${raw.id}: $rejectReason")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing notification ${raw.id}", e)
+                        db.rawNotificationDao().markAsFailed(raw.id, e.message ?: "Unknown error")
                         completedCount++
                         onProgress?.invoke(completedCount, total, label)
                         if ((index + 1) % 5 == 0) yield()
-                        return@forEachIndexed
                     }
-
-                    if (result.transaction.isVerified) {
-                        val txn = Transaction(
-                            merchant = result.transaction.merchant,
-                            amount = result.transaction.amount,
-                                        category = settingsFlow.value.resolveActiveCategoryByLabel(result.transaction.category)
-                                ?: CategoryDefinition(
-                                    id = Category.OTHER.name,
-                                    label = Category.OTHER.label,
-                                    emoji = Category.OTHER.emoji
-                                ),
-                            date = raw.postTimeMillis,
-                            isAiParsed = true,
-                            confidence = 0.95f,
-                            rawNotificationText = raw.text
-                        )
-
-                        db.transactionDao().insertTransaction(txn.toEntity())
-                        Log.d(TAG, "✓ Processed: ${txn.merchant} $${txn.amount}")
-                        processedCount++
-                    } else {
-                        val merchantOk = result.transaction.merchant != "Error" &&
-                            result.transaction.merchant != "Unknown" &&
-                            merchantAppearsInRaw(result.transaction.merchant, raw.text)
-                        val amountOk = result.transaction.amount > 0.0
-
-                        if (merchantOk && amountOk) {
-                            val rescued = Transaction(
-                                merchant = result.transaction.merchant,
-                                amount = result.transaction.amount,
-                                category = CategoryDefinition(
-                                    id = Category.OTHER.name,
-                                    label = Category.OTHER.label,
-                                    emoji = Category.OTHER.emoji
-                                ),
-                                date = raw.postTimeMillis,
-                                isAiParsed = true,
-                                confidence = 0.45f,
-                                rawNotificationText = raw.text
-                            )
-                            db.transactionDao().insertTransaction(rescued.toEntity())
-                            processedCount++
-                            Log.w(TAG, "~ Rescued with OTHER category: ${result.transaction.verificationNotes}")
-                        } else {
-                            Log.w(TAG, "✗ Verification failed and not recoverable: ${result.transaction.verificationNotes}")
-                        }
-                    }
-
-                    db.rawNotificationDao().markAsProcessed(raw.id)
-                    completedCount++
-                    onProgress?.invoke(completedCount, total, label)
-                    if ((index + 1) % 5 == 0) yield()
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error processing notification ${raw.id}", e)
-                    db.rawNotificationDao().markAsFailed(raw.id, e.message ?: "Unknown error")
-                    completedCount++
-                    onProgress?.invoke(completedCount, total, label)
-                    if ((index + 1) % 5 == 0) yield()
                 }
+
+                if (processedCount > 0) {
+                    val cacheReady = true
+                    Log.d(TAG, "Post-processing cache sync complete; cacheReady=$cacheReady")
+                }
+
+                refreshModelStatus()
+
+                Log.d(TAG, "Processing complete: $processedCount/$total successful")
+                processedCount
             }
-
-            if (processedCount > 0) {
-                val cacheReady = true
-                Log.d(TAG, "Post-processing cache sync complete; cacheReady=$cacheReady")
-            }
-
-            refreshModelStatus()
-
-            Log.d(TAG, "Processing complete: $processedCount/$total successful")
-            processedCount
         }
     }
 
@@ -436,10 +422,12 @@ class RealRepository(
     }
 
     override suspend fun wipeAllData() {
-        db.clearAllTables()
-        prefs.edit { clear() }
-        settingsFlow.value = AppSettings()
-        modelStatusFlow.value = buildCurrentModelStatus()
+        withContext(Dispatchers.IO) {
+            db.clearAllTables()
+            prefs.edit(commit = true) { clear() }
+            settingsFlow.value = AppSettings()
+            modelStatusFlow.value = buildCurrentModelStatus()
+        }
     }
 
     override suspend fun exportToCsv(): String {
@@ -500,27 +488,11 @@ class RealRepository(
         if (amount <= 0.0) return "Rejected: amount was not positive"
         return null
     }
-
-    private fun defaultBudgetLimits(): Map<Category, Double> = mapOf(
-        Category.DINING to 350.0,
-        Category.GROCERIES to 500.0,
-        Category.GAS to 260.0,
-        Category.BILLS to 450.0,
-        Category.SUBSCRIPTIONS to 120.0,
-        Category.ENTERTAINMENT to 200.0,
-        Category.SHOPPING to 280.0,
-        Category.TRANSPORT to 220.0,
-        Category.HEALTH to 160.0,
-        Category.TRAVEL to 350.0,
-        Category.OTHER to 180.0
-    )
-
     private fun loadAppSettingsFromPrefs(): AppSettings {
-        val json = prefs.getString(settingsKey, null) ?: return appSettingsFallback()
+        val json = prefs.getString(settingsKey, null) ?: return AppSettings()
         return try {
             val root = JSONObject(json)
             AppSettings(
-                primaryBank = root.optString("primaryBank", ""),
                 ignoredApps = root.optJSONArray("ignoredApps")?.let { array ->
                     buildSet {
                         for (index in 0 until array.length()) {
@@ -529,25 +501,7 @@ class RealRepository(
                     }
                 } ?: emptySet(),
                 customRules = parseRuleDefinitions(root.optJSONArray("customRules") ?: org.json.JSONArray()),
-                budgetLimits = root.optJSONObject("budgetLimits")?.let { budgetJson ->
-                    buildMap {
-                        Category.entries.forEach { category ->
-                            if (budgetJson.has(category.name)) {
-                                put(category, budgetJson.optDouble(category.name, defaultBudgetLimits()[category] ?: 0.0))
-                            }
-                        }
-                    }
-                } ?: emptyMap(),
-                categoryPresentation = root.optJSONObject("categoryPresentation")?.let { presentationJson ->
-                    buildMap {
-                        presentationJson.keys().forEach { key ->
-                            val item = presentationJson.optJSONObject(key) ?: return@forEach
-                            val label = item.optString("label").ifBlank { return@forEach }
-                            val emoji = item.optString("emoji").ifBlank { "📁" }
-                            put(key, CategoryPresentation(label = label, emoji = emoji))
-                        }
-                    }
-                } ?: emptyMap(),
+                processNow = root.optBoolean("processNow", false),
                 customBudgetCategories = root.optJSONArray("customBudgetCategories")?.let { customArray ->
                     buildList {
                         for (index in 0 until customArray.length()) {
@@ -563,11 +517,10 @@ class RealRepository(
                 hiddenCategoryIds = root.optJSONArray("hiddenCategoryIds")?.let { hiddenArray ->
                     buildSet {
                         for (index in 0 until hiddenArray.length()) {
-                            hiddenArray.optString(index).takeIf { it.isNotBlank() }?.let { add(normalizeBudgetId(it)) }
+                            hiddenArray.optString(index).takeIf { it.isNotBlank() }?.let { add(it) }
                         }
                     }
                 } ?: emptySet(),
-                // in loadAppSettingsFromPrefs(), inside the AppSettings(...) constructor call:
                 periodConfig = root.optJSONObject("periodConfig")?.let { pc ->
                     when (pc.optString("type")) {
                         "WEEKLY" -> BudgetPeriodConfig.Weekly(pc.optInt("startDayOfWeek", Calendar.SUNDAY))
@@ -581,19 +534,20 @@ class RealRepository(
             )
         } catch (t: Throwable) {
             Log.w(TAG, "Failed to read saved settings, using defaults", t)
-            appSettingsFallback()
+            AppSettings()
         }
     }
 
-    private fun appSettingsFallback(): AppSettings = AppSettings(
-        primaryBank = "Chase",
-        ignoredApps = setOf(),
-        customRules = listOf()
-    )
+    private fun findIgnoreRule(merchant: String?, rawText: String): RuleDefinition? =
+    settingsFlow.value.customRules.firstOrNull { rule ->
+        rule.action == RuleAction.IGNORE && when (rule.matchField) {
+            RuleField.RAW_TEXT -> rawText.contains(rule.query, ignoreCase = true)
+            RuleField.MERCHANT -> merchant?.contains(rule.query, ignoreCase = true) == true
+        }
+    }
 
     private fun persistSettings(settings: AppSettings) {
         val root = JSONObject().apply {
-            put("primaryBank", settings.primaryBank)
             put("ignoredApps", org.json.JSONArray(settings.ignoredApps.toList()))
             put("customRules", org.json.JSONArray().apply {
                 settings.customRules.forEach { rule ->
@@ -607,19 +561,7 @@ class RealRepository(
                     })
                 }
             })
-            put("budgetLimits", JSONObject().apply {
-                settings.budgetLimits.forEach { (category, limit) ->
-                    put(category.name, limit)
-                }
-            })
-            put("categoryPresentation", JSONObject().apply {
-                settings.categoryPresentation.forEach { (key, presentation) ->
-                    put(key, JSONObject().apply {
-                        put("label", presentation.label)
-                        put("emoji", presentation.emoji)
-                    })
-                }
-            })
+            put("processNow", settings.processNow)
             put("customBudgetCategories", org.json.JSONArray().apply {
                 settings.customBudgetCategories.forEach { custom ->
                     put(JSONObject().apply {
@@ -640,28 +582,15 @@ class RealRepository(
                         put("type", "BIWEEKLY")
                         put("anchorMillis", config.anchorMillis)
                     }
-                    is BudgetPeriodConfig.SemiMonthly -> {
-                        put("type", "SEMI_MONTHLY")
-                    }
-                    is BudgetPeriodConfig.Monthly -> {
-                        put("type", "MONTHLY")
-                    }
-                    // SemiMonthly and Monthly: type string only
+                    is BudgetPeriodConfig.SemiMonthly -> put("type", "SEMI_MONTHLY")
+                    is BudgetPeriodConfig.Monthly -> put("type", "MONTHLY")
                 }
             })
-
             put("hiddenCategoryIds", org.json.JSONArray(settings.hiddenCategoryIds.toList()))
         }
-        prefs.edit().putString(settingsKey, root.toString()).apply()
+        prefs.edit { putString(settingsKey, root.toString()) }
     }
 
-    private companion object {
-        const val BUILTIN_PREFIX = "builtin:"
-    }
-
-    private fun normalizeBudgetId(budgetId: String): String {
-        return if (budgetId.startsWith(BUILTIN_PREFIX)) budgetId.removePrefix(BUILTIN_PREFIX) else budgetId
-    }
 
     private fun parseRuleDefinitions(array: org.json.JSONArray): List<RuleDefinition> {
         return buildList {
@@ -729,13 +658,13 @@ class RealRepository(
 
 
 
-        prefs.edit().apply {
+        prefs.edit {
             if (currentFingerprint != "No File found") {
                 putString(modelFingerprintKey, currentFingerprint)
             } else {
                 remove(modelFingerprintKey)
             }
-        }.apply()
+        }
 
         return ModelStatus(
             isDownloaded = true,
