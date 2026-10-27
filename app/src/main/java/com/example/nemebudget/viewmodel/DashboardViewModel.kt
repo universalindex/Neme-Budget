@@ -42,9 +42,12 @@ class DashboardViewModel(private val repo: AppRepository) : ViewModel() {
         .map { list -> list.groupBy { it.category }.mapValues { (_, txns) -> txns.sumOf { it.amount } } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    val safeToSpend: StateFlow<Double> = transactions
-        .map { list -> 2000.0 - list.sumOf { it.amount } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
+    val safeToSpend: StateFlow<Double> = combine(
+        transactions,
+        repo.getBudgets()
+    ){ txList, budgetList ->
+        budgetList.sumOf { it.limit } - txList.sumOf { it.amount }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
 
     fun previousPeriod() {
         _referenceMillis.value = currentPeriod.value.previous().startMillis

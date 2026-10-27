@@ -44,6 +44,8 @@ import java.util.Calendar
 import java.util.Locale
 import org.json.JSONObject
 import androidx.core.content.edit
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * RealRepository - The TRUE data source that connects the UI to the database.
@@ -65,6 +67,7 @@ class RealRepository(
 ) : AppRepository {
 
     private val TAG = "RealRepository"
+    private val processingMutex = Mutex()
     private val prefs = context.applicationContext.getSharedPreferences("nemebudget_prefs", Context.MODE_PRIVATE)
     private val modelFingerprintKey = "model_fingerprint"
     private val settingsKey = "app_settings_json"
@@ -249,8 +252,6 @@ class RealRepository(
     override suspend fun saveSettings(settings: AppSettings) {
         settingsFlow.value = settings
         persistSettings(settings)
-        Log.d(TAG, "Settings saved: primaryBank=${settings.primaryBank}")
-        // TODO: Persist to DataStore/Room
     }
 
     /**
@@ -273,113 +274,124 @@ class RealRepository(
         limit: Int,
         onProgress: ((processed: Int, total: Int, currentItemLabel: String?) -> Unit)?
     ): Int {
-        return withContext(Dispatchers.IO) {
-            val pending = db.rawNotificationDao().getUnprocessedRawNotifications(limit)
-            val total = pending.size
-            Log.d(TAG, "Processing $total pending notifications...")
+        return processingMutex.withLock {
+            withContext(Dispatchers.IO) {
+                val pending = db.rawNotificationDao().getUnprocessedRawNotifications(limit)
+                val total = pending.size
+                Log.d(TAG, "Processing $total pending notifications...")
 
-            var processedCount = 0
-            var completedCount = 0
-            onProgress?.invoke(0, total, null)
+                var processedCount = 0
+                var completedCount = 0
+                onProgress?.invoke(0, total, null)
 
-            pending.forEachIndexed { index, raw ->
-                val label = raw.title.ifBlank { raw.text.take(48) }
-                try {
-                    val gate = TransactionalNotificationGate.evaluate(raw.title, raw.text)
-                    if (!gate.passed) {
-                        Log.d(TAG, "Skipped rawId=${raw.id} before LLM: ${gate.reason}")
+                pending.forEachIndexed { index, raw ->
+                    val label = raw.title.ifBlank { raw.text.take(48) }
+                    try {
+                        val gate = TransactionalNotificationGate.evaluate(raw.title, raw.text)
+                        if (!gate.passed) {
+                            Log.d(TAG, "Skipped rawId=${raw.id} before LLM: ${gate.reason}")
+                            db.rawNotificationDao().markAsProcessed(raw.id)
+                            completedCount++
+                            onProgress?.invoke(completedCount, total, label)
+                            if ((index + 1) % 5 == 0) yield()
+                            return@forEachIndexed
+                        }
+
+                        val result = llmPipeline.extractWithRetry(raw.text)
+
+                        val rejectReason = rejectionReasonFor(
+                            result.transaction.merchant,
+                            result.transaction.amount
+                        )
+                        if (rejectReason != null) {
+                            db.rawNotificationDao().markAsFailed(raw.id, rejectReason)
+                            if (result.transaction.merchant.equals("Error", ignoreCase = true)) {
+                                notifyRejectedExtraction(raw, rejectReason)
+                            }
+                            Log.w(TAG, "✗ Rejected extraction for rawId=${raw.id}: $rejectReason")
+                            completedCount++
+                            onProgress?.invoke(completedCount, total, label)
+                            if ((index + 1) % 5 == 0) yield()
+                            return@forEachIndexed
+                        }
+
+                        if (result.transaction.isVerified) {
+                            val txn = Transaction(
+                                merchant = result.transaction.merchant,
+                                amount = result.transaction.amount,
+                                category = settingsFlow.value.resolveActiveCategoryByLabel(result.transaction.category)
+                                    ?: CategoryDefinition(
+                                        id = Category.OTHER.name,
+                                        label = Category.OTHER.label,
+                                        emoji = Category.OTHER.emoji
+                                    ),
+                                date = raw.postTimeMillis,
+                                isAiParsed = true,
+                                confidence = 0.95f,
+                                rawNotificationText = raw.text
+                            )
+
+                            db.transactionDao().insertTransaction(txn.toEntity())
+                            Log.d(TAG, "✓ Processed: ${txn.merchant} $${txn.amount}")
+                            processedCount++
+                        } else {
+                            val merchantOk = result.transaction.merchant != "Error" &&
+                                    result.transaction.merchant != "Unknown" &&
+                                    merchantAppearsInRaw(result.transaction.merchant, raw.text)
+                            val amountOk = result.transaction.amount > 0.0
+
+                            if (merchantOk && amountOk) {
+                                val rescued = Transaction(
+                                    merchant = result.transaction.merchant,
+                                    amount = result.transaction.amount,
+                                    category = CategoryDefinition(
+                                        id = Category.OTHER.name,
+                                        label = Category.OTHER.label,
+                                        emoji = Category.OTHER.emoji
+                                    ),
+                                    date = raw.postTimeMillis,
+                                    isAiParsed = true,
+                                    confidence = 0.45f,
+                                    rawNotificationText = raw.text
+                                )
+                                db.transactionDao().insertTransaction(rescued.toEntity())
+                                processedCount++
+                                Log.w(
+                                    TAG,
+                                    "~ Rescued with OTHER category: ${result.transaction.verificationNotes}"
+                                )
+                            } else {
+                                Log.w(
+                                    TAG,
+                                    "✗ Verification failed and not recoverable: ${result.transaction.verificationNotes}"
+                                )
+                            }
+                        }
+
                         db.rawNotificationDao().markAsProcessed(raw.id)
                         completedCount++
                         onProgress?.invoke(completedCount, total, label)
                         if ((index + 1) % 5 == 0) yield()
-                        return@forEachIndexed
-                    }
 
-                    val result = llmPipeline.extractWithRetry(raw.text)
-
-                    val rejectReason = rejectionReasonFor(result.transaction.merchant, result.transaction.amount)
-                    if (rejectReason != null) {
-                        db.rawNotificationDao().markAsFailed(raw.id, rejectReason)
-                        if (result.transaction.merchant.equals("Error", ignoreCase = true)) {
-                            notifyRejectedExtraction(raw, rejectReason)
-                        }
-                        Log.w(TAG, "✗ Rejected extraction for rawId=${raw.id}: $rejectReason")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing notification ${raw.id}", e)
+                        db.rawNotificationDao().markAsFailed(raw.id, e.message ?: "Unknown error")
                         completedCount++
                         onProgress?.invoke(completedCount, total, label)
                         if ((index + 1) % 5 == 0) yield()
-                        return@forEachIndexed
                     }
-
-                    if (result.transaction.isVerified) {
-                        val txn = Transaction(
-                            merchant = result.transaction.merchant,
-                            amount = result.transaction.amount,
-                                        category = settingsFlow.value.resolveActiveCategoryByLabel(result.transaction.category)
-                                ?: CategoryDefinition(
-                                    id = Category.OTHER.name,
-                                    label = Category.OTHER.label,
-                                    emoji = Category.OTHER.emoji
-                                ),
-                            date = raw.postTimeMillis,
-                            isAiParsed = true,
-                            confidence = 0.95f,
-                            rawNotificationText = raw.text
-                        )
-
-                        db.transactionDao().insertTransaction(txn.toEntity())
-                        Log.d(TAG, "✓ Processed: ${txn.merchant} $${txn.amount}")
-                        processedCount++
-                    } else {
-                        val merchantOk = result.transaction.merchant != "Error" &&
-                            result.transaction.merchant != "Unknown" &&
-                            merchantAppearsInRaw(result.transaction.merchant, raw.text)
-                        val amountOk = result.transaction.amount > 0.0
-
-                        if (merchantOk && amountOk) {
-                            val rescued = Transaction(
-                                merchant = result.transaction.merchant,
-                                amount = result.transaction.amount,
-                                category = CategoryDefinition(
-                                    id = Category.OTHER.name,
-                                    label = Category.OTHER.label,
-                                    emoji = Category.OTHER.emoji
-                                ),
-                                date = raw.postTimeMillis,
-                                isAiParsed = true,
-                                confidence = 0.45f,
-                                rawNotificationText = raw.text
-                            )
-                            db.transactionDao().insertTransaction(rescued.toEntity())
-                            processedCount++
-                            Log.w(TAG, "~ Rescued with OTHER category: ${result.transaction.verificationNotes}")
-                        } else {
-                            Log.w(TAG, "✗ Verification failed and not recoverable: ${result.transaction.verificationNotes}")
-                        }
-                    }
-
-                    db.rawNotificationDao().markAsProcessed(raw.id)
-                    completedCount++
-                    onProgress?.invoke(completedCount, total, label)
-                    if ((index + 1) % 5 == 0) yield()
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error processing notification ${raw.id}", e)
-                    db.rawNotificationDao().markAsFailed(raw.id, e.message ?: "Unknown error")
-                    completedCount++
-                    onProgress?.invoke(completedCount, total, label)
-                    if ((index + 1) % 5 == 0) yield()
                 }
+
+                if (processedCount > 0) {
+                    val cacheReady = true
+                    Log.d(TAG, "Post-processing cache sync complete; cacheReady=$cacheReady")
+                }
+
+                refreshModelStatus()
+
+                Log.d(TAG, "Processing complete: $processedCount/$total successful")
+                processedCount
             }
-
-            if (processedCount > 0) {
-                val cacheReady = true
-                Log.d(TAG, "Post-processing cache sync complete; cacheReady=$cacheReady")
-            }
-
-            refreshModelStatus()
-
-            Log.d(TAG, "Processing complete: $processedCount/$total successful")
-            processedCount
         }
     }
 
@@ -520,7 +532,6 @@ class RealRepository(
         return try {
             val root = JSONObject(json)
             AppSettings(
-                primaryBank = root.optString("primaryBank", ""),
                 ignoredApps = root.optJSONArray("ignoredApps")?.let { array ->
                     buildSet {
                         for (index in 0 until array.length()) {
@@ -538,6 +549,7 @@ class RealRepository(
                         }
                     }
                 } ?: emptyMap(),
+                processNow = root.optBoolean("processNow", false),
                 categoryPresentation = root.optJSONObject("categoryPresentation")?.let { presentationJson ->
                     buildMap {
                         presentationJson.keys().forEach { key ->
@@ -586,14 +598,12 @@ class RealRepository(
     }
 
     private fun appSettingsFallback(): AppSettings = AppSettings(
-        primaryBank = "Chase",
         ignoredApps = setOf(),
         customRules = listOf()
     )
 
     private fun persistSettings(settings: AppSettings) {
         val root = JSONObject().apply {
-            put("primaryBank", settings.primaryBank)
             put("ignoredApps", org.json.JSONArray(settings.ignoredApps.toList()))
             put("customRules", org.json.JSONArray().apply {
                 settings.customRules.forEach { rule ->
@@ -607,6 +617,7 @@ class RealRepository(
                     })
                 }
             })
+            put("processNow", settings.processNow)
             put("budgetLimits", JSONObject().apply {
                 settings.budgetLimits.forEach { (category, limit) ->
                     put(category.name, limit)
@@ -652,7 +663,7 @@ class RealRepository(
 
             put("hiddenCategoryIds", org.json.JSONArray(settings.hiddenCategoryIds.toList()))
         }
-        prefs.edit().putString(settingsKey, root.toString()).apply()
+        prefs.edit { putString(settingsKey, root.toString()) }
     }
 
     private companion object {
@@ -729,13 +740,13 @@ class RealRepository(
 
 
 
-        prefs.edit().apply {
+        prefs.edit {
             if (currentFingerprint != "No File found") {
                 putString(modelFingerprintKey, currentFingerprint)
             } else {
                 remove(modelFingerprintKey)
             }
-        }.apply()
+        }
 
         return ModelStatus(
             isDownloaded = true,

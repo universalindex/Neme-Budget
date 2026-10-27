@@ -73,6 +73,7 @@ import com.example.nemebudget.viewmodel.DashboardViewModel
 import com.example.nemebudget.viewmodel.SettingsViewModel
 import com.example.nemebudget.viewmodel.TransactionsViewModel
 import kotlinx.coroutines.launch
+import androidx.core.content.edit
 
 private const val APP_PREFS_NAME = "nemebudget_prefs"
 private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
@@ -97,12 +98,12 @@ private fun MainApp() {
     val showBottomBar = bottomDestinations.any { it.route == currentRoute }
 
     val context = LocalContext.current
-    // Hoist LlmPipeline so it stays in RAM across tab navigation
-    val pipeline = remember { LlmPipeline(context) }
+    val app = context.applicationContext as NemeApp
+    val pipeline = app.pipeline
+    val repo = app.repository
     // Open the encrypted database (SQLCipher)
     val database = remember { AppDatabase.getDatabase(context) }
     // Use RealRepository that reads/writes to the encrypted database
-    val repo = remember { RealRepository(context, database, pipeline) }
     val dashboardViewModel = remember { DashboardViewModel(repo) }
     val transactionsViewModel = remember { TransactionsViewModel(repo) }
     val budgetsViewModel = remember { BudgetsViewModel(repo) }
@@ -182,7 +183,7 @@ private fun MainApp() {
                 }
             },
             onFinished = {
-                onboardingPrefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, true).apply()
+                onboardingPrefs.edit { putBoolean(KEY_ONBOARDING_COMPLETED, true) }
                 onboardingCompleted = true
             }
         )
@@ -251,12 +252,8 @@ private fun MainApp() {
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     pipeline = pipeline,
-                    onOpenLab = { navController.navigate(AppDestination.Lab.route) },
                     onOpenManageRules = { navController.navigate(AppDestination.ManageRules.route) }
                 )
-            }
-            composable(AppDestination.Lab.route) {
-                LlmTestingScreen(pipeline = pipeline, modifier = Modifier.fillMaxSize())
             }
             composable(AppDestination.ManageRules.route) {
                 ManageRulesScreen(
@@ -367,97 +364,6 @@ private fun MainApp() {
     }
 }
 
-@Composable
-fun LlmTestingScreen(pipeline: LlmPipeline, modifier: Modifier = Modifier) {
-    var rawNotificationInput by remember {
-        mutableStateOf("Card Guard Credit Card *3320 $9.13 at SQ *KIWI LOCO FROZEN Y. Tap for details.")
-    }
-    var outputTransaction by remember { mutableStateOf<ExtractedTransaction?>(null) }
-    var rawLlmJsonOutput by remember { mutableStateOf("") }
-    var isProcessing by remember { mutableStateOf(false) }
-    var detectedDevice by remember { mutableStateOf("Detecting...") }
-    var retriesUsed by remember { mutableStateOf(0) }
-
-    val coroutineScope = rememberCoroutineScope()
-    val context = LocalContext.current
-
-    LaunchedEffect(Unit) {
-        detectedDevice = pipeline.getBestLlmDevice()
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(text = "The Brain Testing Lab", style = MaterialTheme.typography.headlineMedium)
-        
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                context.startActivity(intent)
-            }) {
-                Text("Grant Listener Permission")
-            }
-            
-            Button(onClick = {
-                sendTestNotification(context, rawNotificationInput)
-            }) {
-                Text("Post as System Notification")
-            }
-        }
-
-        Text(text = "Detected LLM Device: $detectedDevice", style = MaterialTheme.typography.bodySmall)
-
-        OutlinedTextField(
-            value = rawNotificationInput,
-            onValueChange = { rawNotificationInput = it },
-            label = { Text("Notification Text to Test") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Button(
-            onClick = {
-                coroutineScope.launch {
-                    isProcessing = true
-                    val result = pipeline.extractWithRetry(rawNotificationInput, maxAttempts = 2)
-                    rawLlmJsonOutput = result.rawJson
-                    outputTransaction = result.transaction
-                    retriesUsed = result.retries
-                    isProcessing = false
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !isProcessing
-        ) {
-            Text(if (isProcessing) "LLM Thinking..." else "Process Manual Text")
-        }
-
-        HorizontalDivider()
-
-        Text(text = "Raw LLM JSON Output (Retries: $retriesUsed):", style = MaterialTheme.typography.titleMedium)
-        Text(text = rawLlmJsonOutput, style = MaterialTheme.typography.bodyMedium)
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(text = "Verification Result:", style = MaterialTheme.typography.titleMedium)
-        outputTransaction?.let { transaction ->
-            val resultColor = if (transaction.isVerified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-
-            Surface(color = resultColor.copy(alpha = 0.1f), modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Verified: ${transaction.isVerified}", color = resultColor, style = MaterialTheme.typography.titleSmall)
-                    Text("Merchant: ${transaction.merchant}")
-                    Text("Amount: $${transaction.amount}")
-                    Text("Category: ${transaction.category}")
-                    Text("Notes: ${transaction.verificationNotes}", color = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
-    }
-}
-
 /**
  * Helper to post a real Android notification so we can test the BankNotificationListenerService.
  */
@@ -482,7 +388,7 @@ private fun sendTestNotification(context: Context, text: String) {
 private fun isPostNotificationsGranted(context: Context): Boolean {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
+            PackageManager.PERMISSION_GRANTED
     } else {
         true
     }

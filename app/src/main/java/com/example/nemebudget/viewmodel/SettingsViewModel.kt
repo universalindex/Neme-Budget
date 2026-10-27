@@ -55,21 +55,16 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     private val _totalCount = MutableStateFlow(0)
     val totalCount: StateFlow<Int> = _totalCount
     private var hasAttemptedStartupProcessing = false
-    private var primaryBankSaveJob: Job? = null
 
     init {
         refreshCount()
     }
 
-
-    fun updatePrimaryBank(bank: String) {
-        val updated = settings.value.copy(primaryBank = bank)
-        primaryBankSaveJob?.cancel()
-        primaryBankSaveJob = viewModelScope.launch {
-            delay(500)
-            repo.saveSettings(updated)
-        }
+    fun setProcessNow(enabled: Boolean) {
+    viewModelScope.launch {
+        repo.saveSettings(settings.value.copy(processNow = enabled))
     }
+}
     fun updatePeriodConfig(config: BudgetPeriodConfig) {
         val updated = settings.value.copy(periodConfig = config)
         viewModelScope.launch {

@@ -131,14 +131,14 @@ fun AppSettings.resolveActiveCategoryByLabel(categoryLabel: String): CategoryDef
 }
 
 data class AppSettings(
-    val primaryBank: String = "",
     val ignoredApps: Set<String> = emptySet(),
     val customRules: List<RuleDefinition> = emptyList(),
     val budgetLimits: Map<Category, Double> = emptyMap(),
     val categoryPresentation: Map<String, CategoryPresentation> = emptyMap(),
     val customBudgetCategories: List<CustomBudgetCategory> = emptyList(),
     val hiddenCategoryIds: Set<String> = emptySet(),
-    val periodConfig: BudgetPeriodConfig = BudgetPeriodConfig.Monthly
+    val periodConfig: BudgetPeriodConfig = BudgetPeriodConfig.Monthly,
+    val processNow: Boolean = false
 )
 
 data class RejectedNotification(

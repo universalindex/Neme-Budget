@@ -137,11 +137,19 @@ You MUST USE THIS TOOL. DO NOTHING ELSE
 Rules:
     Merchant: Prioritize store/payee names. Exclude card/reference numbers.
     Amount: Use the transaction value. Ignore balances or limits.
-    Category: Select the most relevant category or "Other".
+    Category: Choose the category that best matches the transaction
     Fallback: If no transaction is found, return "Error" for merchant and 0.0 for amount.
-Example:
+Examples:
 Notification: America First Alert: Card Guard Credit Card *3320 $9.13 at SQ *Kiwi Loco Frozen Y.
 Output: {"merchant": "Kiwi Loco Frozen Y", "amount": 9.13, "category": "Dining"}
+
+Notification: Chase LoLo Hawaiian BBQ, Orem, Utah $15.18
+Output: {"merchant": "Smiths", "amount": 15.18, "category": "Shopping"}
+
+Infer information from notification content:
+For example if part of the notification mentions a restaurant and there is a dining category:
+Output the name of the restaurant for merchant, and "Dining" for category.
+
 """.trimIndent()
 
 

@@ -1,7 +1,6 @@
 package com.example.nemebudget.ui.screens
 
 import android.Manifest
-import android.R
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -136,7 +135,7 @@ private fun AnchorDateButton(anchorMillis: Long, onAnchorPicked: (Long) -> Unit)
     }
 }
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLab: () -> Unit, onOpenManageRules: () -> Unit) {
+fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenManageRules: () -> Unit) {
     val context = LocalContext.current
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -160,7 +159,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
     }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val modelStatus by viewModel.modelStatus.collectAsStateWithLifecycle()
-    val isOptimizing by viewModel.isOptimizing.collectAsStateWithLifecycle()
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
     val pendingCount by viewModel.pendingNotificationCount.collectAsStateWithLifecycle()
     val processingState by viewModel.processingState.collectAsStateWithLifecycle()
@@ -225,6 +223,30 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
                             Text("Grant Post Notifications")
                         }
                     }
+                }
+            }
+        }
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Process immediately", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Parse each alert as it arrives instead of in batches. Uses more battery.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Switch(
+                        checked = settings.processNow,
+                        onCheckedChange = viewModel::setProcessNow
+                    )
                 }
             }
         }
@@ -493,7 +515,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, pipeline: LlmPipeline, onOpenLa
         }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (BuildConfig.DEBUG){Button(onClick = onOpenLab) { Text("Open LLM Lab") }}
                     Button(
                         onClick = { showWipeDialog = true },
                         colors = ButtonDefaults.buttonColors(
@@ -598,22 +619,6 @@ private fun IgnoreAppsScreen(
             )
         }
 
-        item {
-            OutlinedTextField(
-                value = manualPackageInput,
-                onValueChange = { manualPackageInput = it },
-                label = { Text("Add package manually (com.example.app)") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = {
-                    val pkg = manualPackageInput.trim()
-                    if (pkg.isNotBlank()) {
-                        viewModel.setIgnoredApp(pkg, ignored = true)
-                        manualPackageInput = ""
-                    }
-                }),
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
 
         item {
             Button(
@@ -660,7 +665,7 @@ private fun loadInstalledLaunchableApps(packageManager: PackageManager): List<De
     return packageManager.queryIntentActivities(intent, 0)
         .map { info ->
             DeviceAppItem(
-                label = info.loadLabel(packageManager)?.toString().orEmpty().ifBlank { info.activityInfo.packageName },
+                label = info.loadLabel(packageManager).toString().ifBlank { info.activityInfo.packageName },
                 packageName = info.activityInfo.packageName
             )
         }
@@ -696,7 +701,7 @@ private fun postTestNotification(
     val resolvedTitle = notificationTitle.ifBlank { "Card Guard" }
 
     val notification = NotificationCompat.Builder(context, "test_bank_channel")
-        .setSmallIcon(R.drawable.ic_dialog_info)
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
         .setContentTitle(resolvedTitle)
         .setContentText(notificationText)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
