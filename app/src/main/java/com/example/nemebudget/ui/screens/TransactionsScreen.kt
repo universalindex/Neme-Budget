@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +20,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -41,6 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,8 +67,9 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import androidx.compose.ui.text.style.TextAlign
-
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 @Composable
 fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavController) {
     val transactions by viewModel.filteredTransactions.collectAsStateWithLifecycle()
@@ -98,6 +103,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(5.dp, 5.dp ),
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
     Box(
@@ -112,9 +118,6 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("Transactions", style = MaterialTheme.typography.headlineSmall)
-            Button(onClick = { showAddTransactionSheet = true }) {
-                Text("Add transaction")
-            }
             OutlinedTextField(
                 value = query,
                 onValueChange = viewModel::onSearchQueryChanged,
@@ -177,6 +180,20 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
                     .weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                if (groupedTransactions.isEmpty()) {
+                    item {
+                        when {
+                            query.isNotBlank() || selected != null ->
+                                EmptyState("🔍", "No matches", "Try a different search or filter.")
+                            categoryOptions.isEmpty() ->
+                                EmptyState("🧾", "No transactions yet",
+                                    "Transactions appear here as notifications arrive. Add a budget in Budgets so they can be sorted.")
+                            else ->
+                                EmptyState("🧾", "No transactions yet",
+                                    "They'll appear here as bank notifications arrive, or tap + to add one.")
+                        }
+                    }
+                }
                 groupedTransactions.forEach { (dateLabel, items) ->
                     item {
                         Text(
@@ -198,14 +215,12 @@ fun TransactionsScreen(viewModel: TransactionsViewModel, navController: NavContr
                 }
             }
         }
-        FloatingActionButton(
-            onClick = { showAddTransactionSheet = true },
+        FloatingActionButton(onClick = { showAddTransactionSheet = true },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .size(104.dp)
                 .padding(16.dp)
         ) {
-            Text("+", style = MaterialTheme.typography.displaySmall)
+            Icon(Icons.Default.Add, contentDescription = "Add transaction")
         }
     }
     }
@@ -340,6 +355,7 @@ private fun EditTransactionBottomSheet(
     var amountInput by remember(original.id) { mutableStateOf(String.format(Locale.US, "%.2f", original.amount)) }
     var selectedCategory by remember(original.id) { mutableStateOf(original.category) }
     var menuExpanded by remember { mutableStateOf(false) }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -362,21 +378,45 @@ private fun EditTransactionBottomSheet(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth()
             )
-            Text("Category", style = MaterialTheme.typography.labelLarge)
-            OutlinedButton(onClick = { menuExpanded = true }) {
-                Text(selectedCategory.label)
-            }
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                categoryOptions.forEach { category ->
-                    DropdownMenuItem(
-                        text = { Text(category.label) },
-                        onClick = {
-                            selectedCategory = category
-                            menuExpanded = false
-                        }
+
+            if (categoryOptions.isEmpty()) {
+                Text(
+                    "Budget not created: ${selectedCategory.label}. Create a budget in Budgets to move this transaction into one.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                ExposedDropdownMenuBox(
+                    expanded = menuExpanded,
+                    onExpandedChange = { menuExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = selectedCategory.label,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Budget") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = menuExpanded) },
+                        modifier = Modifier
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                            .fillMaxWidth()
                     )
+                    ExposedDropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        categoryOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text("${option.emoji} ${option.label}") },
+                                onClick = {
+                                    selectedCategory = option
+                                    menuExpanded = false
+                                }
+                            )
+                        }
+                    }
                 }
             }
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(onClick = onDismiss) { Text("Cancel") }
                 Button(
@@ -405,6 +445,7 @@ private fun EditTransactionBottomSheet(
         }
     }
 }
+
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 private fun AddTransactionBottomSheet(
@@ -414,8 +455,9 @@ private fun AddTransactionBottomSheet(
 ) {
     var merchant by remember { mutableStateOf("") }
     var amountInput by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf(categoryOptions.firstOrNull { it.label == "Other" } ?: categoryOptions.first()) }
+    var selectedCategory by remember(categoryOptions) { mutableStateOf(categoryOptions.firstOrNull()) }
     var menuExpanded by remember { mutableStateOf(false) }
+    val category = selectedCategory
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -439,33 +481,57 @@ private fun AddTransactionBottomSheet(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth()
             )
-            Text("Category", style = MaterialTheme.typography.labelLarge)
-            OutlinedButton(onClick = { menuExpanded = true }) {
-                Text(selectedCategory.label)
-            }
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                categoryOptions.forEach { category ->
-                    DropdownMenuItem(
-                        text = { Text(category.label) },
-                        onClick = {
-                            selectedCategory = category
-                            menuExpanded = false
-                        }
+
+            if (category == null) {
+                Text(
+                    "You need a budget before you can add a transaction. Go to Budgets and tap + to create one.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+            } else {
+                ExposedDropdownMenuBox(
+                    expanded = menuExpanded,
+                    onExpandedChange = { menuExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = category.label,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Budget") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = menuExpanded) },
+                        modifier = Modifier
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                            .fillMaxWidth()
                     )
+                    ExposedDropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        categoryOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text("${option.emoji} ${option.label}") },
+                                onClick = {
+                                    selectedCategory = option
+                                    menuExpanded = false
+                                }
+                            )
+                        }
+                    }
                 }
             }
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(onClick = onDismiss) { Text("Cancel") }
                 Button(
+                    enabled = category != null && merchant.isNotBlank() && amountInput.toDoubleOrNull() != null,
                     onClick = {
-                        val parsedAmount = amountInput.toDoubleOrNull() ?: return@Button
-                        onSave(merchant, parsedAmount, selectedCategory)
+                        val amount = amountInput.toDoubleOrNull()
+                        if (category != null && amount != null) onSave(merchant.trim(), amount, category)
                     }
-                ) {
-                    Text("Add")
-                }
+                ) { Text("Add") }
             }
             Spacer(Modifier.size(18.dp))
         }
     }
 }
+

@@ -19,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -70,7 +71,7 @@ import androidx.compose.material3.RadioButton
 import java.util.Locale
 import androidx.compose.material3.FilterChip
 import androidx.core.app.NotificationCompat
-
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 private data class DeviceAppItem(
     val label: String,
     val packageName: String
@@ -88,23 +89,30 @@ private fun PeriodTypeRow(label: String, selected: Boolean, onClick: () -> Unit)
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DayOfWeekChipRow(selectedDay: Int, onDaySelected: (Int) -> Unit) {
-    // Calendar.SUNDAY == 1, ..., Calendar.SATURDAY == 7
+private fun DayOfWeekChipRow(
+    selectedDay: Int,
+    onDaySelected: (Int) -> Unit
+) {
     val days = listOf(
-        Calendar.SUNDAY to "S", Calendar.MONDAY to "M", Calendar.TUESDAY to "T",
-        Calendar.WEDNESDAY to "W", Calendar.THURSDAY to "T", Calendar.FRIDAY to "F",
-        Calendar.SATURDAY to "S"
+        Calendar.SUNDAY to "Sun",
+        Calendar.MONDAY to "Mon",
+        Calendar.TUESDAY to "Tue",
+        Calendar.WEDNESDAY to "Wed",
+        Calendar.THURSDAY to "Thu",
+        Calendar.FRIDAY to "Fri",
+        Calendar.SATURDAY to "Sat"
     )
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 40.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
-        days.forEach { (dayValue, letter) ->
-            FilterChip(
-                selected = dayValue == selectedDay,
-                onClick = { onDaySelected(dayValue) },
-                label = { Text(letter) }
+        days.forEach { (day, label) ->
+            FilterChip(                       // use whichever chip type your old code used
+                selected = selectedDay == day,
+                onClick = { onDaySelected(day) },
+                label = { Text(label) }
             )
         }
     }

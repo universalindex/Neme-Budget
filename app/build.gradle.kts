@@ -55,10 +55,6 @@ dependencies {
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.1")
 
     // 1. The Official Pre-Compiled MLC LLM Engine (Loaded from your local libs folder)
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
-
-    // Kotlinx Serialization (Required internally by the mlc4j .aar for handling OpenAIProtocol)
-    implementation(libs.kotlinx.serialization.json)
 
     // --- NEW: ROOM DATABASE & ENCRYPTION (SQLCIPHER) ---
     implementation(libs.androidx.room.runtime)

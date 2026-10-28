@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -71,10 +72,11 @@ fun BudgetsScreen(viewModel: BudgetsViewModel) {
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(5.dp, 5.dp ),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(onClick = { showingAddCustomDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = "Add custom budget category")
+                Icon(Icons.Default.Add, contentDescription = "Add custom budget")
             }
         }
     ) { innerPadding ->
@@ -93,7 +95,8 @@ fun BudgetsScreen(viewModel: BudgetsViewModel) {
                     EmptyState(
                         emoji = "💰",
                         title = "No budgets yet",
-                        message = "Tap the + to add your first budget."
+                        message = "Tap the + to add your first budget.",
+                        modifier = Modifier.padding(top = 48.dp)
                     )
                 }
             }
@@ -106,7 +109,7 @@ fun BudgetsScreen(viewModel: BudgetsViewModel) {
                         )
                     ) {
                         Text(
-                            text = "Warning: ${offender?.label ?: "A category"} is over budget",
+                            text = "Warning: ${offender?.label ?: "A budget"} is over it's spending limit!",
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             modifier = Modifier
                                 .clickable {
@@ -162,7 +165,7 @@ fun BudgetsScreen(viewModel: BudgetsViewModel) {
                 viewModel.addCustomCategory(label, emoji, limit)
                 showingAddCustomDialog = false
                 scope.launch {
-                    snackbarHostState.showSnackbar("Added custom budget category: $label")
+                    snackbarHostState.showSnackbar("Added custom budget: $label")
                 }
             }
         )
@@ -354,7 +357,7 @@ private fun BudgetEditBottomSheet(
     }
 
     if (showDeleteConfirm) {
-        val destructiveTitle = "Delete category?"
+        val destructiveTitle = "Delete budget?"
         val destructiveMessage = "This will delete '${budget.label}', it will remove any rules referencing it and designate all transactions that belong to it as 'Uncategorized'"
 
         AlertDialog(
@@ -395,7 +398,7 @@ private fun AddCustomCategoryDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add custom category") },
+        title = { Text("Add custom budget") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
@@ -405,7 +408,7 @@ private fun AddCustomCategoryDialog(
                             labelInput = next
                         }
                     },
-                    label = { Text("Category label") },
+                    label = { Text("Budget label") },
                     supportingText = { Text(labelHint) },
                     modifier = Modifier.fillMaxWidth()
                 )

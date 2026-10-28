@@ -2,16 +2,22 @@ package com.example.nemebudget.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import com.example.nemebudget.model.RuleAction
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -69,6 +75,7 @@ fun ManageRulesScreen(
 	}
 
 	Scaffold(
+		contentWindowInsets = WindowInsets(0.dp),
 		floatingActionButton = {
 			FloatingActionButton(onClick = { showAddSheet = true }) {
 				Icon(Icons.Default.Add, contentDescription = "Add rule")
@@ -181,34 +188,29 @@ private fun AddRuleSheet(
 		Column(
 			modifier = Modifier
 				.fillMaxWidth()
+				.imePadding()
+        		.verticalScroll(rememberScrollState())
 				.padding(24.dp),
+
 			verticalArrangement = Arrangement.spacedBy(16.dp)
 		) {
 			Text(if (initialRule == null) "Add Rule" else "Edit Rule", style = MaterialTheme.typography.titleLarge)
 			Text("Choose the field to match, enter the text, then pick the category.", style = MaterialTheme.typography.bodySmall)
+			ChipGroup(
+				title = "Match field",
+				options = RuleField.entries,
+				isSelected = { matchField == it },
+				labelOf = { it.label },
+				onSelect = { matchField = it }
+			)
 
-			Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-				Text("Match field", style = MaterialTheme.typography.labelLarge)
-				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-					RuleField.entries.forEach { field ->
-						InputChip(
-							selected = matchField == field,
-							onClick = { matchField = field },
-							label = { Text(field.label) }
-						)
-					}
-				}
-			}
-			Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-				Text("Action", style = MaterialTheme.typography.labelLarge)
-				RuleAction.entries.chunked(2).forEach { rowActions ->
-					Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-						rowActions.forEach { a ->
-							InputChip(selected = action == a, onClick = { action = a }, label = { Text(a.label) })
-						}
-					}
-				}
-			}
+			ChipGroup(
+				title = "Action",
+				options = RuleAction.entries,
+				isSelected = { action == it },
+				labelOf = { it.label },
+				onSelect = { action = it }
+			)
 			OutlinedTextField(
 				value = query,
 				onValueChange = { query = it },
@@ -227,23 +229,13 @@ private fun AddRuleSheet(
 			)
 		} else {
 
-			Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-				Text("Category", style = MaterialTheme.typography.labelLarge)
-				categoryOptions.chunked(2).forEach { rowCategories ->
-					Row(
-						horizontalArrangement = Arrangement.spacedBy(8.dp),
-						modifier = Modifier.fillMaxWidth()
-					) {
-						rowCategories.forEach { category ->
-							InputChip(
-								selected = selectedCategory == category.label,
-								onClick = { selectedCategory = category.label },
-								label = { Text(category.label) }
-							)
-						}
-					}
-				}
-			}
+			ChipGroup(
+				title = "Category",
+				options = categoryOptions,
+				isSelected = { selectedCategory == it.label },
+				labelOf = { it.label },
+				onSelect = { selectedCategory = it.label }
+			)
 		}
 	}
 		RuleAction.SET_MERCHANT -> OutlinedTextField(
@@ -281,6 +273,31 @@ private fun AddRuleSheet(
 					},
 					modifier = Modifier.weight(1f)
 				) { Text("Save") }
+			}
+		}
+	}
+}
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun <T> ChipGroup(
+	title: String,
+	options: List<T>,
+	isSelected: (T) -> Boolean,
+	labelOf: (T) -> String,
+	onSelect: (T) -> Unit
+) {
+	Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+		Text(title, style = MaterialTheme.typography.labelLarge)
+		FlowRow(
+			horizontalArrangement = Arrangement.spacedBy(8.dp),
+			verticalArrangement = Arrangement.spacedBy(0.dp)   // chips already carry ~16dp of hidden padding
+		) {
+			options.forEach { option ->
+				InputChip(
+					selected = isSelected(option),
+					onClick = { onSelect(option) },
+					label = { Text(labelOf(option)) }
+				)
 			}
 		}
 	}
